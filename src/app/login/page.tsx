@@ -77,7 +77,8 @@ export default function LoginPage() {
                         username: user.email!,
                     };
                     const hostDocRef = doc(firestore, 'hosts', user.uid);
-                    setDocumentNonBlocking(hostDocRef, hostProfile, {});
+                    // Using { merge: true } is safer, it creates or updates.
+                    setDocumentNonBlocking(hostDocRef, hostProfile, { merge: true });
 
                     router.push('/'); // Redirect to host dashboard after creation
                 }

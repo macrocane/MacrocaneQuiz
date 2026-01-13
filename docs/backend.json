@@ -1,0 +1,318 @@
+{
+  "entities": {
+    "Host": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Host",
+      "type": "object",
+      "description": "Represents a quiz host with administrative privileges.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the host."
+        },
+        "username": {
+          "type": "string",
+          "description": "Username for the host's administrative access."
+        }
+      },
+      "required": [
+        "id",
+        "username"
+      ]
+    },
+    "Participant": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Participant",
+      "type": "object",
+      "description": "Represents a participant in a quiz.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the participant."
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the participant.",
+          "format": "email"
+        },
+        "nickname": {
+          "type": "string",
+          "description": "The chosen nickname of the participant for display in the quiz and leaderboard."
+        },
+        "icon": {
+          "type": "string",
+          "description": "URL or reference to the participant's chosen icon."
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "nickname"
+      ]
+    },
+    "Quiz": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Quiz",
+      "type": "object",
+      "description": "Represents a quiz instance.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the quiz."
+        },
+        "hostId": {
+          "type": "string",
+          "description": "Reference to the Host who created and manages the quiz. (Relationship: Host 1:N Quiz)"
+        },
+        "startTime": {
+          "type": "string",
+          "description": "The scheduled start time of the quiz.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "hostId",
+        "startTime"
+      ]
+    },
+    "Question": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Question",
+      "type": "object",
+      "description": "Represents a question within a quiz.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the question."
+        },
+        "quizId": {
+          "type": "string",
+          "description": "Reference to the Quiz this question belongs to. (Relationship: Quiz 1:N Question)"
+        },
+        "questionType": {
+          "type": "string",
+          "description": "Type of question (e.g., single choice, open-ended, image/audio, linked pairs)."
+        },
+        "questionText": {
+          "type": "string",
+          "description": "The text of the question."
+        },
+        "answerOptions": {
+          "type": "array",
+          "description": "Array of possible answer options for the question.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "correctAnswer": {
+          "type": "string",
+          "description": "The correct answer to the question."
+        },
+        "standardScore": {
+          "type": "number",
+          "description": "The standard score awarded for a correct answer to this question."
+        }
+      },
+      "required": [
+        "id",
+        "quizId",
+        "questionType",
+        "questionText"
+      ]
+    },
+    "ParticipantAnswer": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ParticipantAnswer",
+      "type": "object",
+      "description": "Represents a participant's answer to a specific question in a quiz.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the participant's answer."
+        },
+        "participantId": {
+          "type": "string",
+          "description": "Reference to the Participant who answered the question. (Relationship: Participant 1:N ParticipantAnswer)"
+        },
+        "questionId": {
+          "type": "string",
+          "description": "Reference to the Question being answered. (Relationship: Question 1:N ParticipantAnswer)"
+        },
+        "answer": {
+          "type": "string",
+          "description": "The participant's answer to the question."
+        },
+        "responseTime": {
+          "type": "number",
+          "description": "The time taken by the participant to answer the question (in seconds)."
+        },
+        "score": {
+          "type": "number",
+          "description": "The score awarded to the participant for their answer (can be manually set by the host)."
+        }
+      },
+      "required": [
+        "id",
+        "participantId",
+        "questionId",
+        "answer",
+        "responseTime"
+      ]
+    },
+    "MonthlyRanking": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "MonthlyRanking",
+      "type": "object",
+      "description": "Represents the monthly ranking of participants based on their scores.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the monthly ranking entry."
+        },
+        "participantId": {
+          "type": "string",
+          "description": "Reference to the Participant being ranked. (Relationship: Participant 1:N MonthlyRanking)"
+        },
+        "month": {
+          "type": "number",
+          "description": "The month for which the ranking is calculated (e.g., 1 for January, 2 for February)."
+        },
+        "year": {
+          "type": "number",
+          "description": "The year for which the ranking is calculated."
+        },
+        "totalScore": {
+          "type": "number",
+          "description": "The total score of the participant for the specified month and year."
+        }
+      },
+      "required": [
+        "id",
+        "participantId",
+        "month",
+        "year",
+        "totalScore"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/hosts/{hostId}",
+        "definition": {
+          "entityName": "Host",
+          "schema": {
+            "$ref": "#/backend/entities/Host"
+          },
+          "description": "Stores host accounts. The {hostId} is the Firebase Auth UID.",
+          "params": [
+            {
+              "name": "hostId",
+              "description": "The Firebase Auth UID of the host."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "Participant",
+          "schema": {
+            "$ref": "#/backend/entities/Participant"
+          },
+          "description": "Stores participant profiles. The {userId} is the Firebase Auth UID.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The Firebase Auth UID of the participant."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/quizzes/{quizId}",
+        "definition": {
+          "entityName": "Quiz",
+          "schema": {
+            "$ref": "#/backend/entities/Quiz"
+          },
+          "description": "Stores quiz instances.",
+          "params": [
+            {
+              "name": "quizId",
+              "description": "Unique identifier for the quiz."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/quizzes/{quizId}/questions/{questionId}",
+        "definition": {
+          "entityName": "Question",
+          "schema": {
+            "$ref": "#/backend/entities/Question"
+          },
+          "description": "Stores questions for a specific quiz.",
+          "params": [
+            {
+              "name": "quizId",
+              "description": "Unique identifier for the quiz."
+            },
+            {
+              "name": "questionId",
+              "description": "Unique identifier for the question."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/quizzes/{quizId}/questions/{questionId}/answers/{answerId}",
+        "definition": {
+          "entityName": "ParticipantAnswer",
+          "schema": {
+            "$ref": "#/backend/entities/ParticipantAnswer"
+          },
+          "description": "Stores participant answers for a specific question. Includes denormalized 'participantId' for authorization independence.",
+          "params": [
+            {
+              "name": "quizId",
+              "description": "Unique identifier for the quiz."
+            },
+            {
+              "name": "questionId",
+              "description": "Unique identifier for the question."
+            },
+            {
+              "name": "answerId",
+              "description": "Unique identifier for the participant's answer."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/monthly_rankings/{rankingId}",
+        "definition": {
+          "entityName": "MonthlyRanking",
+          "schema": {
+            "$ref": "#/backend/entities/MonthlyRanking"
+          },
+          "description": "Stores monthly rankings for participants.",
+          "params": [
+            {
+              "name": "rankingId",
+              "description": "Unique identifier for the monthly ranking entry."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "This Firestore structure prioritizes security, scalability, and debuggability, focusing on authorization independence and clear access patterns. It uses path-based ownership for user-specific data and membership maps for collaborative data. Denormalization is used extensively to avoid `get()` calls in security rules, enabling atomic operations.\n\nHosts are managed in a dedicated collection. Participants register with email/password, and their profiles are stored under `/users/{userId}`. Quizzes are stored under `/quizzes/{quizId}` and questions under `/quizzes/{quizId}/questions/{questionId}`. Participant answers are stored in a subcollection `/quizzes/{quizId}/questions/{questionId}/answers/{answerId}`, which includes the `participantId` denormalized to ensure that list operations are secure and authorization rules remain simple.\n\nThe `/monthly_rankings/{rankingId}` collection stores each participant's monthly ranking, enabling efficient querying and aggregation for leaderboard purposes.\n\n**Authorization Independence:**  The structure enforces authorization independence by storing necessary authorization data (e.g., participantId for answers). This eliminates the need for `get()` calls in security rules, simplifying rules and preventing broken atomic operations.\n\n**QAPs (Rules are not Filters):** Segregation is used to enforce access control.  User profiles are private and only accessible to the user and admins.  Quiz data is accessible according to the rules defined on the quiz and question collections. All `list` operations are secured because authorization information is duplicated.\n\n**DBAC:** Authorization is based only on `request.auth.uid`. No custom claims are used."
+  }
+}

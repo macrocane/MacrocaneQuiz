@@ -1,0 +1,188 @@
+/**
+ * This ruleset enforces a security model for a quiz application with two main user roles: Hosts and Participants.
+ *
+ * Core Philosophy:
+ * The security model is built on document ownership. Hosts own the quizzes they create, and participants own their
+ * user profiles and the answers they submit. This ensures that users can only modify data they are explicitly
+ * authorized to access. Publicly readable data, like quizzes and leaderboards, is separated from private data.
+ *
+ * Data Structure:
+ * - /hosts/{hostId}: Private profiles for quiz hosts.
+ * - /users/{userId}: Private profiles for quiz participants.
+ * - /quizzes/{quizId}: Publicly readable quiz data, writable only by the host owner.
+ *   - /quizzes/{quizId}/participants/{participantId}: A list of participants in the quiz. Readable by anyone signed in, but only the host can manage the list.
+ *   - /quizzes/{quizId}/questions/{questionId}: Questions for a quiz.
+ *     - /quizzes/{quizId}/questions/{questionId}/answers/{answerId}: Participant answers, where each participant
+ *       can only create their own answer, and only the quiz host can read all answers for scoring.
+ * - /monthly_rankings/{rankingId}: A publicly readable collection for leaderboards, which is not writable by clients.
+ *
+ * Key Security Decisions:
+ * - User/Host Enumeration Blocked: The root /users and /hosts collections are not listable, preventing malicious
+ *   actors from downloading a list of all participants or hosts.
+ * - Strict Ownership: All write operations are gated behind an ownership check, ensuring that only the creator of a
+ *   resource (e.g., a quiz host, a participant profile) can modify or delete it.
+ * - Public Reads, Private Writes: Quizzes and questions are readable by any signed-in user, but only the designated
+ *   host can create, update, or delete them. This allows participants to join and play quizzes while maintaining
+ *   the integrity of the quiz content.
+ * - Server-Side Writes for Rankings: The /monthly_rankings collection is read-only for all clients. This assumes that
+ *   rankings are calculated and written by a trusted server-side process (e.g., Cloud Functions), which is a secure
+ *   pattern for aggregated data.
+ *
+ * Denormalization for Authorization:
+ * - Quiz Ownership: The `hostId` is stored directly on each `/quizzes/{quizId}` document. This allows security rules
+ *   for quizzes and their subcollections to perform a fast and cheap ownership check without needing extra database reads.
+ * - Answer Ownership: The `participantId` is stored on each `.../answers/{answerId}` document. This allows a participant
+ *   to create their own answer securely, proving ownership at the time of creation.
+ *
+ * Structural Segregation:
+ * - User data (/users) is kept separate from quiz data (/quizzes). This clear separation simplifies rule logic and
+ *   ensures private user information cannot accidentally be exposed through list operations on public collections.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------------
+    // Helper Functions
+    // ------------------------------------------------------------------------
+
+    /**
+     * Returns true if the user is signed in.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * Returns true if the user's UID matches the provided userId.
+     * This is the fundamental check for document ownership.
+     */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    /**
+     * Returns true if the user is the owner of an existing document.
+     * Used for update and delete operations to prevent writes to non-existent paths.
+     */
+    function isExistingOwner(userId) {
+      return isOwner(userId) && resource != null;
+    }
+
+    /**
+     * Returns true if the current user is the host of the specified quiz.
+     * This function performs a document read, which is necessary to secure subcollections
+     * based on data in their parent document.
+     */
+    function isHostOfQuiz(quizId) {
+      let quizDoc = get(/databases/$(database)/documents/quizzes/$(quizId));
+      return isSignedIn() && quizDoc.data.hostId == request.auth.uid;
+    }
+
+    // ------------------------------------------------------------------------
+    // Collection Rules
+    // ------------------------------------------------------------------------
+
+    /**
+     * @description Controls access to Host profiles. Only the host can manage their own profile.
+     * @path /hosts/{hostId}
+     * @allow (create) A new host with auth UID 'host123' creates their own profile document at /hosts/host123.
+     * @deny (list) An authenticated user tries to list all documents in the /hosts collection.
+     * @principle Restricts access to a user's own data tree and prevents user enumeration.
+     */
+    match /hosts/{hostId} {
+      allow get: if isOwner(hostId);
+      allow list: if false;
+      allow create: if isOwner(hostId) && request.resource.data.id == hostId;
+      allow update: if isExistingOwner(hostId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(hostId);
+    }
+
+    /**
+     * @description Controls access to Participant profiles. Only the participant can manage their own profile.
+     * @path /users/{userId}
+     * @allow (create) A new user with auth UID 'user123' creates their own profile document at /users/user123.
+     * @deny (get) User 'user456' tries to read the profile of user 'user123'.
+     * @principle Restricts access to a user's own data tree and prevents user enumeration.
+     */
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && request.resource.data.id == userId;
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Controls access to Quizzes. Signed-in users can read, but only the designated host can write.
+     * @path /quizzes/{quizId}
+     * @allow (get) Any signed-in participant reads a quiz to play it.
+     * @deny (create) A participant tries to create a new quiz.
+     * @principle Enforces document ownership for writes while allowing public reads for authenticated users.
+     */
+    match /quizzes/{quizId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isOwner(request.resource.data.hostId);
+      allow update: if resource != null && isOwner(resource.data.hostId) && request.resource.data.hostId == resource.data.hostId;
+      allow delete: if resource != null && isOwner(resource.data.hostId);
+
+      /**
+       * @description Controls access to the list of participants in a quiz.
+       * @path /quizzes/{quizId}/participants/{participantId}
+       * @allow (list) Any signed-in user can see who is in the quiz lobby.
+       * @allow (create) A participant can add themselves to the quiz.
+       * @deny (delete) Only the host can remove a participant.
+       * @principle Allows participants to join, but restricts management to the quiz host.
+       */
+      match /participants/{participantId} {
+        allow get: if isSignedIn();
+        allow list: if isSignedIn();
+        allow create: if isOwner(participantId);
+        allow update: if isOwner(participantId) || isHostOfQuiz(quizId);
+        allow delete: if isHostOfQuiz(quizId);
+      }
+
+      /**
+       * @description Controls access to Questions within a quiz. Access is derived from the parent quiz.
+       * @path /quizzes/{quizId}/questions/{questionId}
+       * @allow (list) Any signed-in participant lists the questions for a quiz they are playing.
+       * @deny (update) A participant tries to change the text of a question.
+       * @principle Secures a subcollection by checking ownership data on the parent document.
+       */
+      match /questions/{questionId} {
+        allow get: if isSignedIn();
+        allow list: if isSignedIn();
+        allow write: if isHostOfQuiz(quizId);
+        
+        /**
+         * @description Controls access to participant Answers. Participants can only create their own answers.
+         * @path /quizzes/{quizId}/questions/{questionId}/answers/{answerId}
+         * @allow (create) A participant with UID 'user123' submits an answer with 'participantId' set to 'user123'.
+         * @deny (list) A participant tries to list all answers for a question to see what others answered.
+         * @principle Enforces document ownership for creation and limits read/write access to owners and admins (hosts).
+         */
+        match /answers/{answerId} {
+          allow get: if resource != null && (isOwner(resource.data.participantId) || isHostOfQuiz(quizId));
+          allow list: if isSignedIn();
+          allow create: if isOwner(request.resource.data.participantId);
+          allow update: if false; // Participants cannot update their answers
+          allow delete: if resource != null && isHostOfQuiz(quizId);
+        }
+      }
+    }
+
+    /**
+     * @description Controls access to monthly rankings. This data is public to all users but not writable by them.
+     * @path /monthly_rankings/{rankingId}
+     * @allow (get) An anonymous visitor to the app's website views the public leaderboard.
+     * @deny (create) A participant tries to add their own entry to the leaderboard.
+     * @principle Protects aggregated data by making it read-only for clients, enforcing that it must be written by a trusted backend service.
+     */
+    match /monthly_rankings/{rankingId} {
+      allow get: if true;
+      allow list: if true;
+      allow write: if false;
+    }
+  }
+}

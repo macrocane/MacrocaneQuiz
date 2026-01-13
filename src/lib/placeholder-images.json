@@ -1,0 +1,124 @@
+{
+  "placeholderImages": [
+    {
+      "id": "avatar1",
+      "description": "User avatar 1",
+      "imageUrl": "/avatars/avatar1.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar2",
+      "description": "User avatar 2",
+      "imageUrl": "/avatars/avatar2.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar3",
+      "description": "User avatar 3",
+      "imageUrl": "/avatars/avatar3.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar4",
+      "description": "User avatar 4",
+      "imageUrl": "/avatars/avatar4.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar5",
+      "description": "User avatar 5",
+      "imageUrl": "/avatars/avatar5.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar6",
+      "description": "User avatar 6",
+      "imageUrl": "/avatars/avatar6.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar7",
+      "description": "User avatar 7",
+      "imageUrl": "/avatars/avatar7.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar8",
+      "description": "User avatar 8",
+      "imageUrl": "/avatars/avatar8.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar9",
+      "description": "User avatar 9",
+      "imageUrl": "/avatars/avatar9.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar10",
+      "description": "User avatar 10",
+      "imageUrl": "/avatars/avatar10.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar11",
+      "description": "User avatar 11",
+      "imageUrl": "/avatars/avatar11.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar12",
+      "description": "User avatar 12",
+      "imageUrl": "/avatars/avatar12.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar13",
+      "description": "User avatar 13",
+      "imageUrl": "/avatars/avatar13.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar14",
+      "description": "User avatar 14",
+      "imageUrl": "/avatars/avatar14.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar15",
+      "description": "User avatar 15",
+      "imageUrl": "/avatars/avatar15.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar16",
+      "description": "User avatar 16",
+      "imageUrl": "/avatars/avatar16.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar17",
+      "description": "User avatar 17",
+      "imageUrl": "/avatars/avatar17.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar18",
+      "description": "User avatar 18",
+      "imageUrl": "/avatars/avatar18.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar19",
+      "description": "User avatar 19",
+      "imageUrl": "/avatars/avatar19.png",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "avatar20",
+      "description": "User avatar 20",
+      "imageUrl": "/avatars/avatar20.png",
+      "imageHint": "person portrait"
+    }
+  ]
+}

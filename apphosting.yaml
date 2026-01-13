@@ -1,0 +1,33 @@
+# apphosting.yaml
+run:
+  build:
+    - npm i
+    - npm run build
+static_assets:
+  - .next/static
+  - public
+pass_through:
+  - /.next/server/**
+headers:
+- source: /_next/static/(.*)
+  headers:
+    - key: Cache-Control
+      value: public, max-age=31536000, immutable
+- source: /.*/
+  headers:
+    - key: Cache-Control
+      value: no-store
+rewrites:
+  - source: /.*
+    destination: /.next/server/pages/index.html
+    function:
+      entrypoint: .next/server/pages/index.html
+      region: us-central1
+      concurrency: 80
+      memory_mib: 1024
+      cpu: 1
+      timeout_sec: 60
+      min_instances: 0
+      max_instances: 10
+      ingress: internal-and-gclb
+      vpc_connector_egress: private-ranges-only

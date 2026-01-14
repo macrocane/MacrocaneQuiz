@@ -8,7 +8,7 @@ import { initializeApp } from "firebase/app";
 export const firebaseConfig = {
   projectId: "studio-5762279613-4541b",
   appId: "1:1006064055262:web:9863a3c01db7b755b3a34f",
-  apiKey: "AIzaSyCWwtMtMkpegSgZs89ENEjSziNEP1BDwGo",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: "studio-5762279613-4541b.firebaseapp.com",
   messagingSenderId: "1006064055262",
   measurementId: "",

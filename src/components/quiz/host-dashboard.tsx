@@ -481,13 +481,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId || !participantsColRef) return;
   
     // 1. Finalize and commit scores for the current question
-    if (quiz.state === 'live' || quiz.state === 'question-results') {
+    if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
       const batch = writeBatch(firestore);
-      participants.forEach(p => {
-        const participantAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id);
-        const score = participantAnswer?.score ?? 0;
+      const currentParticipantsState = [...participants]; // Create a stable copy for this operation
+      
+      currentParticipantsState.forEach(p => {
+        const participantAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion.id);
+        // If an answer exists, calculate its score. The base score is the participant's score before this question.
+        const scoreForThisQuestion = participantAnswer?.score ?? 0;
+        const newTotalScore = p.score + scoreForThisQuestion;
+  
         const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
-        batch.update(participantRef, { score: p.score + score });
+        batch.update(participantRef, { score: newTotalScore });
       });
       await batch.commit();
     }

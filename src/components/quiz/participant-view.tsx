@@ -2,8 +2,8 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { doc, onSnapshot, FirestoreError, getDoc } from 'firebase/firestore';
+import { useState, useEffect, useRef } from 'react';
+import { doc, onSnapshot, FirestoreError, getDoc, setDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
 import type { Quiz, Participant, Answer, UserProfile } from '@/lib/types';
-import { useUser, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter } from '@/firebase';
+import { useUser, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter, useDoc } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
@@ -22,7 +22,6 @@ type ParticipantStatus = 'loading' | 'joining' | 'waiting' | 'question' | 'answe
 export default function ParticipantView({ quizId }: { quizId: string }) {
   const [status, setStatus] = useState<ParticipantStatus>('loading');
   const [quiz, setQuiz] = useState<Quiz | null>(null);
-  const [participant, setParticipant] = useState<Participant | null>(null);
   const [answer, setAnswer] = useState('');
   const [reorderAnswers, setReorderAnswers] = useState<string[]>([]);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -32,19 +31,23 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const firestore = useFirestore();
 
   const quizDocRef = useMemoFirebase(() => firestore && quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
+  
+  // This hook now manages the participant's data from the subcollection.
+  const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
+  const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
 
-  // Effect to join the quiz once user and quiz data are available
+  // Effect to join the quiz if not already joined
   useEffect(() => {
-    if (user && quiz && quiz.state === 'lobby' && !participant && status !== 'joining') {
-      setStatus('joining');
-
+    // Only try to join if we are logged in, the quiz is in the lobby, and we don't have participant data yet.
+    if (user && quiz?.state === 'lobby' && !myParticipantData && !isParticipantLoading) {
+      
       const joinQuiz = async () => {
         try {
           const userDocRef = doc(firestore, 'users', user.uid);
           const userDocSnap = await getDoc(userDocRef);
 
           let userName = user.email?.split('@')[0] || 'Giocatore Misterioso';
-          let userAvatar = PlaceHolderImages[Math.floor(Math.random() * PlaceHolderImages.length)].imageUrl;
+          let userAvatar = PlaceHolderImages[0].imageUrl;
 
           if (userDocSnap.exists()) {
             const userProfile = userDocSnap.data() as UserProfile;
@@ -61,22 +64,20 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             score: 0,
           };
           
-          const participantRef = doc(firestore, `quizzes/${quizId}/participants`, user.uid);
-          
-          setParticipant(newParticipant);
-          setDocumentNonBlocking(participantRef, newParticipant, {});
+          // Create the participant document. `useDoc` will automatically pick up this change.
+          if(participantDocRef) {
+            await setDoc(participantDocRef, newParticipant);
+          }
 
-          setStatus('waiting');
         } catch (e) {
-          console.error("Error fetching user profile to join quiz:", e);
-          setError("Impossibile recuperare il tuo profilo per partecipare. Riprova.");
-          setStatus('loading');
+          console.error("Error joining quiz:", e);
+          setError("Impossibile partecipare al quiz. Riprova.");
         }
       };
       
       joinQuiz();
     }
-  }, [user, quiz, participant, firestore, quizId, status]);
+  }, [user, quiz?.state, myParticipantData, isParticipantLoading, firestore, quizId, participantDocRef]);
 
   // Effect to listen for quiz state changes from Firestore
   useEffect(() => {
@@ -88,18 +89,11 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             const prevQuizState = quiz?.state;
             setQuiz(quizData);
 
-            if (participant) {
+            if (myParticipantData) {
                 const currentQuestionFromHost = quizData.questions?.[quizData.currentQuestionIndex];
-                 
-                if (quizData.state !== 'lobby' && quizData.participants && !quizData.participants.some(p => p.id === participant.id)) {
-                    setStatus('loading');
-                    setParticipant(null);
-                    setError("Sei stato rimosso dal quiz dall'host.");
-                    return;
-                }
                 
                 const hasAlreadyAnswered = quizData.answers?.some(
-                    a => a.participantId === participant.id && a.questionId === currentQuestionFromHost?.id
+                    a => a.participantId === myParticipantData.id && a.questionId === currentQuestionFromHost?.id
                 );
 
                 if (quizData.state === 'live' && currentQuestionFromHost) {
@@ -115,13 +109,15 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                         }
                     }
                 } else if (quizData.state === 'question-results') {
-                    // Regardless of whether they answered, if host moves on, they see the results/waiting screen
                     setStatus('question-results');
                 } else if (quizData.state === 'results') {
                     setStatus('results');
-                } else if (quizData.state === 'lobby' && status === 'loading') {
+                } else if (quizData.state === 'lobby') {
                     setStatus('waiting');
                 }
+            } else if (quizData.state === 'lobby') {
+                 // If we don't have participant data yet, but we are in the lobby, show joining status.
+                 setStatus('joining');
             }
 
         } else {
@@ -140,22 +136,20 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     });
 
     return () => unsubscribe();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quizDocRef, participant]);
+  }, [quizDocRef, myParticipantData]); // Dependency on myParticipantData ensures we react correctly once joined.
   
   const handleSubmit = () => {
-    if (!startTime || !quiz || !participant || !firestore || !quiz.questions) return;
+    if (!startTime || !quiz || !myParticipantData || !firestore || !quiz.questions) return;
 
     const currentQuestion = quiz.questions[quiz.currentQuestionIndex];
     if (!currentQuestion) return;
 
     const responseTime = (Date.now() - startTime) / 1000;
     
-    // Use participant ID as answer doc ID to ensure one answer per participant per question
-    const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, participant.id);
+    const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, myParticipantData.id);
 
     const answerPayload: Omit<Answer, 'isCheating' | 'cheatingReason' | 'score'> = {
-        participantId: participant.id,
+        participantId: myParticipantData.id,
         questionId: currentQuestion.id,
         responseTime: parseFloat(responseTime.toFixed(2)),
         answerText: currentQuestion.type === 'reorder' ? `Ordine: ${reorderAnswers.join(', ')}` : answer,
@@ -178,16 +172,23 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   };
   
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
-  const myFinalData = quiz?.participants?.find(p => p.id === participant?.id);
-  const finalScore = myFinalData?.score || 0;
+  const finalScore = myParticipantData?.score ?? 0;
 
 
   const renderContent = () => {
-    if (status === 'loading' || status === 'joining' || !quiz) {
+    if (status === 'loading' || isParticipantLoading && status !== 'joining') {
         return (
              <div className="flex flex-col items-center gap-4 text-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">{status === 'joining' ? 'Unendoti al quiz...' : 'Caricamento...'}</p>
+                <p className="text-muted-foreground">Caricamento quiz...</p>
+            </div>
+        );
+    }
+     if (status === 'joining') {
+        return (
+             <div className="flex flex-col items-center gap-4 text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-muted-foreground">Unendoti al quiz...</p>
             </div>
         );
     }
@@ -215,7 +216,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             if (quiz.state === 'lobby') return "Sei nella lobby! In attesa che l'host inizi il quiz...";
             return 'In attesa della prossima domanda...';
         };
-        const myAnswer = status === 'question-results' && currentQuestion ? quiz.answers?.find(a => a.participantId === participant?.id && a.questionId === currentQuestion.id) : undefined;
+        const myAnswer = status === 'question-results' && currentQuestion && myParticipantData ? quiz.answers?.find(a => a.participantId === myParticipantData.id && a.questionId === currentQuestion.id) : undefined;
         
         if (status === 'question-results' && currentQuestion) {
              return (
@@ -262,10 +263,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
           <div className="flex flex-col items-center gap-4 text-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-muted-foreground">{waitingMessage()}</p>
-             {participant && (
+             {myParticipantData && (
                 <div className="flex items-center gap-3 rounded-full bg-muted p-2">
-                    <Image src={participant.avatar} alt={participant.name} width={32} height={32} className="w-8 h-8 rounded-full" />
-                    <span className="font-medium text-sm">{participant.name}</span>
+                    <Image src={myParticipantData.avatar} alt={myParticipantData.name} width={32} height={32} className="w-8 h-8 rounded-full" />
+                    <span className="font-medium text-sm">{myParticipantData.name}</span>
                 </div>
             )}
           </div>
@@ -339,7 +340,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                 <div className="flex flex-col items-center gap-4 text-center">
                     <h2 className="text-2xl font-bold">Quiz Terminato!</h2>
                     <p className="text-muted-foreground">Grazie per aver partecipato. I risultati sono stati mostrati dall'host.</p>
-                    {participant && <p className="text-lg font-semibold">Il tuo punteggio finale: {finalScore} punti</p>}
+                    {myParticipantData && <p className="text-lg font-semibold">Il tuo punteggio finale: {finalScore} punti</p>}
                      <Button onClick={() => {
                         window.location.href = '/';
                      }}>Torna alla Home</Button>
@@ -362,9 +363,3 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     </div>
   );
 }
-
-    
-
-    
-
-    

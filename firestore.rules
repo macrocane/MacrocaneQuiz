@@ -166,7 +166,7 @@ service cloud.firestore {
           allow get: if resource != null && (isOwner(resource.data.participantId) || isHostOfQuiz(quizId));
           allow list: if isSignedIn();
           allow create: if isOwner(request.resource.data.participantId);
-          allow update: if false; // Participants cannot update their answers
+          allow update: if resource != null && isHostOfQuiz(quizId); // Host can update score
           allow delete: if resource != null && isHostOfQuiz(quizId);
         }
       }

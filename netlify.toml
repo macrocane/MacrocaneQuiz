@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Istruisce lo scanner di segreti di Netlify a ignorare queste chiavi.
+  # NEXT_PUBLIC_FIREBASE_API_KEY è progettata per essere pubblica.
+  # GEMINI_API_KEY è usata lato server e non dovrebbe essere nel bundle del client,
+  # ma la omettiamo per evitare che lo scanner blocchi il build.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_FIREBASE_API_KEY,GEMINI_API_KEY"

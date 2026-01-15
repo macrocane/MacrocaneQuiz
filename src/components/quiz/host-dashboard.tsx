@@ -478,44 +478,43 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   }
 
   const nextQuestion = async () => {
-    if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId) return;
-
+    if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId || !participantsColRef) return;
+  
+    // 1. Finalize and commit scores for the current question
     if (quiz.state === 'live' || quiz.state === 'question-results') {
       const batch = writeBatch(firestore);
-      const finalScores: {[key: string]: number} = {};
-
-       participants.forEach(p => {
-          const participantAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id);
-          let score = 0;
-          if (participantAnswer) {
-            score = participantAnswer.score ?? 0;
-          }
-          const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
-          batch.update(participantRef, { score: p.score + score });
-          finalScores[p.id] = p.score + score;
+      participants.forEach(p => {
+        const participantAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id);
+        const score = participantAnswer?.score ?? 0;
+        const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
+        batch.update(participantRef, { score: p.score + score });
       });
       await batch.commit();
     }
-
-
+  
+    // 2. Decide if we move to the next question or end the quiz
     if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
-       updateDocumentNonBlocking(quizDocRef, {
+      // Go to the next question
+      updateDocumentNonBlocking(quizDocRef, {
         state: "live",
         currentQuestionIndex: quiz.currentQuestionIndex + 1,
       });
     } else {
-      const finalParticipants = participants.map(p => ({
-          ...p,
-          score: (participants.find(fp => fp.id === p.id)?.score || 0) + (quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id)?.score || 0),
-      }));
-
+      // End the quiz
+      // Read the final, committed scores to avoid race conditions
+      const finalParticipantsSnapshot = await getDocs(participantsColRef);
+      const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
+      
+      // Pass this guaranteed-correct data to updateLeaderboard
       updateLeaderboard(finalParticipants);
       
-       updateDocumentNonBlocking(quizDocRef, {
+      // Set the final quiz state
+      updateDocumentNonBlocking(quizDocRef, {
         state: "results",
       });
     }
   };
+
   const resetQuiz = () => {
     if (isReadOnly || !user) return;
     setQuizId(null);

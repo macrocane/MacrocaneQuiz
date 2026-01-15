@@ -3,7 +3,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { doc, onSnapshot, FirestoreError } from 'firebase/firestore';
+import { doc, onSnapshot, FirestoreError, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,7 +11,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
-import type { Quiz, Participant, Answer } from '@/lib/types';
+import type { Quiz, Participant, Answer, UserProfile } from '@/lib/types';
 import { useUser, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
@@ -38,11 +38,26 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     if (user && quiz && quiz.state === 'lobby' && !participant && status !== 'joining') {
       setStatus('joining');
 
-      const joinQuiz = () => {
+      const joinQuiz = async () => {
+        try {
+          const userDocRef = doc(firestore, 'users', user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+
+          let userName = user.email?.split('@')[0] || 'Giocatore Misterioso';
+          let userAvatar = PlaceHolderImages[Math.floor(Math.random() * PlaceHolderImages.length)].imageUrl;
+
+          if (userDocSnap.exists()) {
+            const userProfile = userDocSnap.data() as UserProfile;
+            userName = userProfile.nickname;
+            userAvatar = userProfile.icon;
+          } else {
+            console.warn(`User profile for ${user.uid} not found. Using default values.`);
+          }
+
           const newParticipant: Participant = {
             id: user.uid,
-            name: user.displayName || user.email?.split('@')[0] || 'Giocatore Misterioso',
-            avatar: user.photoURL || PlaceHolderImages[Math.floor(Math.random() * PlaceHolderImages.length)].imageUrl,
+            name: userName,
+            avatar: userAvatar,
             score: 0,
           };
           
@@ -52,6 +67,11 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
           setDocumentNonBlocking(participantRef, newParticipant, {});
 
           setStatus('waiting');
+        } catch (e) {
+          console.error("Error fetching user profile to join quiz:", e);
+          setError("Impossibile recuperare il tuo profilo per partecipare. Riprova.");
+          setStatus('loading');
+        }
       };
       
       joinQuiz();
@@ -69,12 +89,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             setQuiz(quizData);
 
             if (participant) {
-                 const currentParticipantData = quizData.participants?.find(p => p.id === participant.id);
-                 if (currentParticipantData) {
-                    setParticipant(currentParticipantData);
-                 }
-
-
                 const currentQuestionFromHost = quizData.questions?.[quizData.currentQuestionIndex];
                  
                 if (quizData.state !== 'lobby' && quizData.participants && !quizData.participants.some(p => p.id === participant.id)) {
@@ -164,7 +178,9 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   };
   
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
-  const finalScore = participant?.score || 0;
+  const myFinalData = quiz?.participants?.find(p => p.id === participant?.id);
+  const finalScore = myFinalData?.score || 0;
+
 
   const renderContent = () => {
     if (status === 'loading' || status === 'joining' || !quiz) {
@@ -346,5 +362,9 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     </div>
   );
 }
+
+    
+
+    
 
     

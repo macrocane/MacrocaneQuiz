@@ -554,11 +554,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     // 1. Finalize and commit scores for the current question
     if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
       const batch = writeBatch(firestore);
-      const currentParticipantsState = [...participants]; // Create a stable copy for this operation
+
+      // Fetch the latest answers for this question directly from Firestore to avoid state lag
+      const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
+      const answersSnapshot = await getDocs(answersColRef);
+      const currentQuestionAnswers = answersSnapshot.docs.map(doc => doc.data() as Answer);
+      
+      const currentParticipantsState = [...participants];
       
       currentParticipantsState.forEach(p => {
-        const participantAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion.id);
-        // If an answer exists, calculate its score. The base score is the participant's score before this question.
+        const participantAnswer = currentQuestionAnswers.find(a => a.participantId === p.id);
         const scoreForThisQuestion = participantAnswer?.score ?? 0;
         const newTotalScore = p.score + scoreForThisQuestion;
   
@@ -582,7 +587,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
       
       // Pass this guaranteed-correct data to updateLeaderboard
-      updateLeaderboard(finalParticipants);
+      await updateLeaderboard(finalParticipants);
       
       // Set the final quiz state
       updateDocumentNonBlocking(quizDocRef, {
@@ -1127,7 +1132,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                               onBlur={(e) => handleScoreChange(p.id, currentQuestion.id, e.target.value)}
                               className="w-20 h-8"
                               aria-label={`Punteggio per ${p.name}`}
-                              disabled={quiz.state === 'question-results' || isReadOnly}
+                              disabled={isReadOnly}
                             />
                             <span>pti</span>
                           </div>

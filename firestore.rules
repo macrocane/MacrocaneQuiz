@@ -14,7 +14,7 @@
  *   - /quizzes/{quizId}/questions/{questionId}: Questions for a quiz.
  *     - /quizzes/{quizId}/questions/{questionId}/answers/{answerId}: Participant answers, where each participant
  *       can only create their own answer, and only the quiz host can read all answers for scoring.
- * - /monthly_rankings/{rankingId}: A publicly readable collection for leaderboards, which is not writable by clients.
+ * - /monthly_rankings/{rankingId}: A publicly readable collection for leaderboards, which is only writable by hosts.
  *
  * Key Security Decisions:
  * - User/Host Enumeration Blocked: The root /users and /hosts collections are not listable, preventing malicious
@@ -24,9 +24,8 @@
  * - Public Reads, Private Writes: Quizzes and questions are readable by any signed-in user, but only the designated
  *   host can create, update, or delete them. This allows participants to join and play quizzes while maintaining
  *   the integrity of the quiz content.
- * - Server-Side Writes for Rankings: The /monthly_rankings collection is read-only for all clients. This assumes that
- *   rankings are calculated and written by a trusted server-side process (e.g., Cloud Functions), which is a secure
- *   pattern for aggregated data.
+ * - Server-Side Writes for Rankings: The /monthly_rankings collection is read-only for clients, except for hosts.
+ *   This is a secure pattern for aggregated data.
  *
  * Denormalization for Authorization:
  * - Quiz Ownership: The `hostId` is stored directly on each `/quizzes/{quizId}` document. This allows security rules
@@ -181,11 +180,11 @@ service cloud.firestore {
     }
 
     /**
-     * @description Controls access to monthly rankings. This data is public to all users but not writable by them.
+     * @description Controls access to monthly rankings. This data is public to all users but only writable by hosts.
      * @path /monthly_rankings/{rankingId}
      * @allow (get) An anonymous visitor to the app's website views the public leaderboard.
      * @deny (create) A participant tries to add their own entry to the leaderboard.
-     * @principle Protects aggregated data by making it read-only for clients, enforcing that it must be written by a trusted backend service.
+     * @principle Protects aggregated data by making it read-only for clients, enforcing that it must be written by a trusted backend service (or a host).
      */
     match /monthly_rankings/{rankingId} {
       allow get: if true;

@@ -97,6 +97,8 @@ const questionSchema = z.object({
 });
 
 const MEDIA_GALLERY_KEY = 'quiz-media-gallery';
+const QUIZ_DRAFT_KEY = 'quiz-draft';
+const ACTIVE_QUIZ_ID_KEY = 'active-quiz-id';
 
 interface HostDashboardProps {
   isReadOnly: boolean;
@@ -123,10 +125,51 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
+
+  useEffect(() => {
+    // This effect runs once on mount to restore session from localStorage
+    try {
+      const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
+      if (activeQuizId) {
+        setQuizId(activeQuizId);
+        return; // Prioritize active quiz over draft
+      }
+
+      const draftJson = localStorage.getItem(QUIZ_DRAFT_KEY);
+      if (draftJson) {
+        const draftQuiz = JSON.parse(draftJson) as Quiz;
+        if (draftQuiz && draftQuiz.state === 'creating') {
+          setQuiz(draftQuiz);
+        }
+      }
+    } catch (error) {
+      console.error("Error restoring session from localStorage:", error);
+      localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
+      localStorage.removeItem(QUIZ_DRAFT_KEY);
+    }
+  }, []); // The empty dependency array ensures this runs only once on mount.
+
+  // Effect to persist quiz state to localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      if (quizId && quiz?.state !== 'creating') {
+        localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
+        localStorage.removeItem(QUIZ_DRAFT_KEY);
+      } else if (quiz?.state === 'creating') {
+        if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
+          localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
+        }
+      }
+    } catch (error) {
+      console.error("Error saving session to localStorage:", error);
+    }
+  }, [quiz, quizId]);
   
   useEffect(() => {
     if (!quizDocRef) {
-      if (!quiz) {
+      if (!quiz) { // Only set default if no draft was loaded
         setQuiz({
           id: '',
           name: "Il Mio Quiz Fantastico",
@@ -145,6 +188,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       if (doc.exists()) {
         const quizData = doc.data() as Quiz;
         setQuiz(quizData);
+      } else {
+        // Quiz was deleted on the backend, so reset the view
+        toast({
+            variant: "destructive",
+            title: "Quiz non trovato",
+            description: "Il quiz a cui eri connesso non esiste più. Ritorno alla creazione.",
+        });
+        resetQuiz();
       }
     },
     (err: FirestoreError) => {
@@ -443,12 +494,22 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
      setQuiz(prev => prev ? ({ ...prev, questions: prev.questions.filter((q) => q.id !== id) }) : null);
   };
   
-  const handleScoreChange = (participantId: string, questionId: string, newScore: number) => {
+  const handleScoreChange = (participantId: string, questionId: string, value: string) => {
     if (!quizDocRef || isReadOnly || !quizId || !quiz) return;
+    
+    let newScore = parseInt(value, 10);
+    if (isNaN(newScore)) {
+        // If the input is cleared or invalid, treat it as 0 to avoid Firestore errors
+        newScore = 0;
+    }
+
     const answerToUpdate = quiz.answers?.find(ans => ans.participantId === participantId && ans.questionId === questionId);
     if(answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
-        updateDocumentNonBlocking(answerDocRef, { score: newScore });
+        // Only update if score is different to avoid unnecessary writes.
+        if (answerToUpdate.score !== newScore) {
+          updateDocumentNonBlocking(answerDocRef, { score: newScore });
+        }
     }
   };
 
@@ -534,8 +595,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       participants: [],
     });
     setParticipants([]);
-    
+    try {
+      localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
+      localStorage.removeItem(QUIZ_DRAFT_KEY);
+    } catch (error) {
+        console.error("Error clearing session from localStorage:", error);
+    }
   };
+
   const restartQuiz = () => {
      if (!quizDocRef || !quiz || isReadOnly || !quizId) return;
 
@@ -1045,9 +1112,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                          
                           <div className="flex items-center gap-1">
                             <Input 
-                              type="number" 
-                              value={answer.score ?? 0}
-                              onChange={(e) => handleScoreChange(p.id, currentQuestion.id, parseInt(e.target.value))}
+                              type="number"
+                              defaultValue={answer.score ?? 0}
+                              onBlur={(e) => handleScoreChange(p.id, currentQuestion.id, e.target.value)}
                               className="w-20 h-8"
                               aria-label={`Punteggio per ${p.name}`}
                               disabled={quiz.state === 'question-results' || isReadOnly}
@@ -1178,3 +1245,5 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
+
+    

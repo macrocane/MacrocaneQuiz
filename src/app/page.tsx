@@ -40,7 +40,6 @@ export default function Home() {
         <h1 className="text-2xl font-bold">Accesso Partecipante</h1>
         <p className="text-muted-foreground">Sei loggato come partecipante. Usa un link d'invito per unirti a un quiz o controlla la classifica.</p>
         <div className="flex gap-4">
-          <Button variant="outline" onClick={() => router.push('/login')}>Accedi come Host</Button>
           <Button onClick={() => router.push('/leaderboard')}>
             <Trophy className="mr-2"/>
             Vai alla Classifica

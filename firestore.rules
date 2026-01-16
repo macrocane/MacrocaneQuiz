@@ -124,7 +124,7 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isSignedIn();
       allow create: if isOwner(request.resource.data.hostId);
-      allow update: if resource != null && isOwner(resource.data.hostId) && request.resource.data.hostId == resource.data.hostId;
+      allow update: if resource != null && isOwner(resource.data.hostId) && request.resource.data.hostId == resource.data.id;
       allow delete: if resource != null && isOwner(resource.data.hostId);
 
       /**
@@ -164,9 +164,9 @@ service cloud.firestore {
          */
         match /answers/{answerId} {
           allow get: if resource != null && (isOwner(resource.data.participantId) || isHostOfQuiz(quizId));
-          allow list: if isSignedIn();
+          allow list: if isHostOfQuiz(quizId);
           allow create: if isOwner(request.resource.data.participantId);
-          allow update: if resource != null && isHostOfQuiz(quizId); // Host can update score
+          allow update: if resource != null && get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
           allow delete: if resource != null && isHostOfQuiz(quizId);
         }
       }

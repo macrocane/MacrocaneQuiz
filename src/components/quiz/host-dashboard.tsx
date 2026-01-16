@@ -35,7 +35,7 @@ import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter, useUser, useCollection } from '@/firebase';
-import { setDocumentNonBlocking, updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 import {
   SidebarProvider,
@@ -303,9 +303,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             const newAnswersForQuestion = snapshot.docs.map(doc => doc.data() as Answer);
             
              setAnswers(prevAnswers => {
+                // Find answers that are not for the current question
                 const otherAnswers = prevAnswers.filter(ans => ans.questionId !== q.id);
+                // Combine them with the new answers for the current question
                 const updatedAnswers = [...otherAnswers, ...newAnswersForQuestion];
 
+                // For each new answer, check if we've seen it before to avoid re-running cheat detection
                 newAnswersForQuestion.forEach(ans => {
                     const alreadyProcessed = prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
                     if (!alreadyProcessed) {
@@ -475,50 +478,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const questionType = form.watch("type");
   const answerType = form.watch("answerType");
-  const { setValue } = form;
-
-  // This effect handles the dependent logic for question type changes.
-  useEffect(() => {
-    const isMediaType = ['image', 'video', 'audio'].includes(questionType);
-
-    if (isMediaType) {
-      // It's a media type. Let the other effect handle the answerType logic.
-      // We can default it here if not set.
-      if (!answerType) {
-        setValue('answerType', 'multiple-choice');
-      }
-    } else {
-      // It's NOT a media type. Reset media fields and set options for the new type.
-      setValue('mediaUrl', '');
-      setValue('answerType', undefined);
-
-      if (questionType === 'multiple-choice') {
-        setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-        setValue('correctAnswer', '0');
-      } else if (questionType === 'open-ended') {
-        setValue('options', []);
-        setValue('correctAnswer', '');
-      } else if (questionType === 'reorder') {
-        setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-        setValue('correctAnswer', undefined);
-      }
-    }
-  }, [questionType, setValue, answerType]);
-
-  // This effect handles the dependent logic for answer type changes (for media questions).
-  useEffect(() => {
-    if (!['image', 'video', 'audio'].includes(questionType)) {
-      return;
-    }
-    
-    if (answerType === 'multiple-choice') {
-      setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-      setValue('correctAnswer', '0');
-    } else if (answerType === 'open-ended') {
-      setValue('options', []);
-      setValue('correctAnswer', '');
-    }
-  }, [answerType, questionType, setValue]);
 
 
   const onSubmit = (data: z.infer<typeof questionSchema>) => {
@@ -605,13 +564,32 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const startQuiz = () => {
     if (!quiz || isReadOnly || !user) return;
     const newQuizId = uuidv4().slice(0, 8);
-    const newQuizState: Quiz = { ...quiz, id: newQuizId, hostId: user.uid, state: "lobby" };
+    
+    // Create a new Quiz object for Firestore, ensuring all necessary fields are present
+    const newQuizState: Quiz = {
+      id: newQuizId,
+      name: quiz.name,
+      hostId: user.uid,
+      state: "lobby",
+      questions: quiz.questions,
+      currentQuestionIndex: 0,
+    };
     
     setQuizId(newQuizId);
     setInviteLink(`${window.location.origin}/join/${newQuizId}`);
     
     const newQuizDocRef = doc(firestore, "quizzes", newQuizId);
-    setDocumentNonBlocking(newQuizDocRef, newQuizState, { merge: true });
+    
+    // Use setDoc which is more robust for creating a new document with a specific ID
+    setDoc(newQuizDocRef, newQuizState).catch(error => {
+      console.error("Error creating quiz document:", error);
+      const contextualError = new FirestorePermissionError({
+        path: newQuizDocRef.path,
+        operation: 'create',
+        requestResourceData: newQuizState,
+      });
+      errorEmitter.emit('permission-error', contextualError);
+    });
   };
 
   const beginQuiz = () => {
@@ -632,30 +610,41 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   
     // 1. Finalize and commit scores for the current question
     if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
-      const batch = writeBatch(firestore);
+      try {
+        const batch = writeBatch(firestore);
 
-      // GET LATEST DATA FROM FIRESTORE to ensure accuracy
-      const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
-      const answersSnapshot = await getDocs(answersColRef);
-      
-      const participantsSnapshot = await getDocs(participantsColRef);
-      const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
-      
-      // Map participant scores from the fetched answers
-      const scoresForThisQuestion: Record<string, number> = {};
-      answersSnapshot.docs.forEach(doc => {
-          const answer = doc.data() as Answer;
-          scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
-      });
+        // GET LATEST DATA FROM FIRESTORE to ensure accuracy
+        const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
+        const answersSnapshot = await getDocs(answersColRef);
+        
+        const participantsSnapshot = await getDocs(participantsColRef);
+        const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
+        
+        // Map participant scores from the fetched answers
+        const scoresForThisQuestion: Record<string, number> = {};
+        answersSnapshot.docs.forEach(doc => {
+            const answer = doc.data() as Answer;
+            scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
+        });
 
-      // Update total scores in the batch
-      currentParticipantsState.forEach(p => {
-        const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
-        const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
-        batch.update(participantRef, { score: newTotalScore });
-      });
+        // Update total scores in the batch
+        currentParticipantsState.forEach(p => {
+          const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
+          const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
+          batch.update(participantRef, { score: newTotalScore });
+        });
 
-      await batch.commit();
+        await batch.commit();
+      } catch (error) {
+         console.error("Failed to commit scores for current question:", error);
+         toast({
+            variant: "destructive",
+            title: "Errore di Sincronizzazione",
+            description: "Impossibile salvare i punteggi della domanda corrente.",
+        });
+        // We don't proceed if scores can't be saved.
+        return;
+      }
     }
   
     // 2. Decide if we move to the next question or end the quiz
@@ -668,6 +657,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     } else {
       // End the quiz
       try {
+        // Fetch the final, updated participant data
         const finalParticipantsSnapshot = await getDocs(participantsColRef);
         const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
         
@@ -680,9 +670,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
           toast({
               variant: "destructive",
               title: "Errore Finale",
-              description: "Impossibile terminare il quiz o aggiornare la classifica.",
+              description: "Impossibile terminare il quiz o aggiornare la classifica. Controlla le regole di Firestore.",
           });
-          // Even if leaderboard fails, try to end the quiz state
+          // Even if leaderboard fails, try to end the quiz state to unblock the host
           updateDocumentNonBlocking(quizDocRef, { state: "results" });
       }
     }
@@ -786,8 +776,34 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Domanda</FormLabel>
                                     <Select 
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value} 
+                                        onValueChange={(newType) => {
+                                            field.onChange(newType); // Update RHF state
+                                            
+                                            const isMediaType = ['image', 'video', 'audio'].includes(newType);
+
+                                            if (isMediaType) {
+                                                // When switching to a media type, default the answer type
+                                                form.setValue('answerType', 'multiple-choice');
+                                                form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+                                                form.setValue('correctAnswer', '0');
+                                            } else {
+                                                // When switching to a non-media type, clear media fields
+                                                form.setValue('answerType', undefined);
+                                                form.setValue('mediaUrl', '');
+                                                
+                                                if (newType === 'multiple-choice') {
+                                                    form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+                                                    form.setValue('correctAnswer', '0');
+                                                } else if (newType === 'open-ended') {
+                                                    form.setValue('options', []);
+                                                    form.setValue('correctAnswer', '');
+                                                } else if (newType === 'reorder') {
+                                                    form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+                                                    form.setValue('correctAnswer', undefined);
+                                                }
+                                            }
+                                        }}
+                                        value={field.value}
                                         disabled={isReadOnly}
                                     >
                                         <FormControl>
@@ -816,8 +832,17 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Risposta</FormLabel>
                                     <Select 
-                                        onValueChange={field.onChange}
-                                        defaultValue={field.value} 
+                                        onValueChange={(newAnswerType) => {
+                                            field.onChange(newAnswerType);
+                                            
+                                            if (newAnswerType === 'multiple-choice') {
+                                                form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+                                                form.setValue('correctAnswer', '0');
+                                            } else if (newAnswerType === 'open-ended') {
+                                                form.setValue('options', []);
+                                                form.setValue('correctAnswer', '');
+                                            }
+                                        }}
                                         value={field.value}
                                         disabled={isReadOnly}
                                     >
@@ -898,7 +923,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                 <FormLabel>Opzioni (seleziona la risposta corretta)</FormLabel>
                                 <RadioGroup
                                 onValueChange={field.onChange}
-                                defaultValue={field.value}
+                                value={field.value}
                                 className="space-y-2"
                                 disabled={isReadOnly}
                                 >

@@ -174,14 +174,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
     
     // Fallback to a new quiz if nothing is found or on error
-    setQuiz({
-      id: '',
-      name: "Il Mio Quiz Fantastico",
-      hostId: '',
-      state: "creating",
-      questions: [],
-      currentQuestionIndex: 0,
-    });
+    if (!quiz) {
+        setQuiz({
+            id: '',
+            name: "Il Mio Quiz Fantastico",
+            hostId: '',
+            state: "creating",
+            questions: [],
+            currentQuestionIndex: 0,
+        });
+    }
 
   }, []);
 
@@ -473,44 +475,50 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const questionType = form.watch("type");
   const answerType = form.watch("answerType");
+  const { setValue } = form;
 
   // This effect handles the dependent logic for question type changes.
   useEffect(() => {
-    const newType = questionType;
-    let newOptions: { value: string }[] = [];
-    let newCorrectAnswer: string | undefined = undefined;
+    const isMediaType = ['image', 'video', 'audio'].includes(questionType);
 
-    if (newType === 'multiple-choice' || newType === 'reorder') {
-      newOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
-      newCorrectAnswer = newType === 'multiple-choice' ? "0" : undefined;
-    } else if (newType === 'open-ended') {
-      newCorrectAnswer = '';
+    if (isMediaType) {
+      // It's a media type. Let the other effect handle the answerType logic.
+      // We can default it here if not set.
+      if (!answerType) {
+        setValue('answerType', 'multiple-choice');
+      }
+    } else {
+      // It's NOT a media type. Reset media fields and set options for the new type.
+      setValue('mediaUrl', '');
+      setValue('answerType', undefined);
+
+      if (questionType === 'multiple-choice') {
+        setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+        setValue('correctAnswer', '0');
+      } else if (questionType === 'open-ended') {
+        setValue('options', []);
+        setValue('correctAnswer', '');
+      } else if (questionType === 'reorder') {
+        setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+        setValue('correctAnswer', undefined);
+      }
     }
-    
-    const currentAnswerType = form.getValues('answerType');
-    // Only reset if the type isn't a media type, or if it is and we need to set a default.
-    if (!['image', 'video', 'audio'].includes(newType)) {
-      form.setValue('answerType', undefined);
-      form.setValue('options', newOptions);
-      form.setValue('correctAnswer', newCorrectAnswer);
-    } else if (!currentAnswerType) {
-       form.setValue('answerType', 'multiple-choice');
-    }
-  }, [questionType]);
+  }, [questionType, setValue, answerType]);
 
   // This effect handles the dependent logic for answer type changes (for media questions).
   useEffect(() => {
-    const isMediaType = ['image', 'video', 'audio'].includes(form.getValues('type'));
-    if (!isMediaType || !answerType) return;
-
-    if (answerType === 'multiple-choice') {
-      form.setValue('options', [{ value: "" }, { value: "" }, { value: "" }, { value: "" }]);
-      form.setValue('correctAnswer', "0");
-    } else {
-      form.setValue('options', []);
-      form.setValue('correctAnswer', '');
+    if (!['image', 'video', 'audio'].includes(questionType)) {
+      return;
     }
-  }, [answerType]);
+    
+    if (answerType === 'multiple-choice') {
+      setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
+      setValue('correctAnswer', '0');
+    } else if (answerType === 'open-ended') {
+      setValue('options', []);
+      setValue('correctAnswer', '');
+    }
+  }, [answerType, questionType, setValue]);
 
 
   const onSubmit = (data: z.infer<typeof questionSchema>) => {
@@ -580,6 +588,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
         
+        // This is now a blocking call to ensure data consistency before proceeding.
         try {
             await updateDoc(answerDocRef, { score: newScore });
         } catch(e) {
@@ -673,6 +682,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
               title: "Errore Finale",
               description: "Impossibile terminare il quiz o aggiornare la classifica.",
           });
+          // Even if leaderboard fails, try to end the quiz state
+          updateDocumentNonBlocking(quizDocRef, { state: "results" });
       }
     }
   };
@@ -1194,12 +1205,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                   </AlertDialog>
                 )}
                  {quiz.state === 'live' && (
-                  <Button onClick={showQuestionResults} disabled={isReadOnly}>
+                  <Button onClick={showQuestionResults} disabled={isReadOnly || currentAnswers.length < participants.length}>
                     <Eye className="mr-2" />
                     Mostra Risposte
                   </Button>
                 )}
-                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={(quiz.state === 'live' && currentAnswers.length < participants.length) || isReadOnly}>
+                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={(quiz.state === 'live') || isReadOnly}>
                   {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina il Quiz"}
                   <ArrowRight className="ml-2"/>
                 </Button>
@@ -1309,5 +1320,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
+
+    
 
     

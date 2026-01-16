@@ -127,12 +127,13 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
   useEffect(() => {
-    // This effect runs once on mount to restore session from localStorage
+    // This effect runs once on mount to restore session OR initialize.
     try {
       const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
       if (activeQuizId) {
         setQuizId(activeQuizId);
-        return; // Prioritize active quiz over draft
+        // Don't set quiz, let the snapshot listener do it.
+        return;
       }
 
       const draftJson = localStorage.getItem(QUIZ_DRAFT_KEY);
@@ -140,24 +141,44 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const draftQuiz = JSON.parse(draftJson) as Quiz;
         if (draftQuiz && draftQuiz.state === 'creating') {
           setQuiz(draftQuiz);
+          return; // Restored from draft
         }
       }
+
+      // If we reach here, there's no active quiz and no draft, so we initialize a new one.
+      setQuiz({
+        id: '',
+        name: "Il Mio Quiz Fantastico",
+        hostId: '', // Will be set by the next effect
+        state: "creating",
+        questions: [],
+        currentQuestionIndex: 0,
+        answers: [],
+        participants: [],
+      });
     } catch (error) {
-      console.error("Error restoring session from localStorage:", error);
+      console.error("Error restoring/initializing session from localStorage:", error);
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     }
   }, []); // The empty dependency array ensures this runs only once on mount.
 
+  // Effect to update hostId in draft when user loads
+  useEffect(() => {
+    if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
+        setQuiz(prev => prev ? { ...prev, hostId: user.uid } : null);
+    }
+  }, [user, quiz]);
+
   // Effect to persist quiz state to localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
     try {
       if (quizId && quiz?.state !== 'creating') {
         localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
         localStorage.removeItem(QUIZ_DRAFT_KEY);
       } else if (quiz?.state === 'creating') {
+        // Condition to avoid saving empty draft on init
         if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
           localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
         }
@@ -169,18 +190,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   
   useEffect(() => {
     if (!quizDocRef) {
-      if (!quiz) { // Only set default if no draft was loaded
-        setQuiz({
-          id: '',
-          name: "Il Mio Quiz Fantastico",
-          hostId: user?.uid || '',
-          state: "creating",
-          questions: [],
-          currentQuestionIndex: 0,
-          answers: [],
-          participants: [],
-        });
-      }
+      // We are in "creating" mode, state is handled by other effects.
       return;
     }
 
@@ -210,7 +220,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribe();
-  }, [quizDocRef, user]);
+  }, [quizDocRef]);
 
 
   useEffect(() => {
@@ -587,7 +597,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     setQuiz({
       id: '',
       name: "Il Mio Quiz Fantastico",
-      hostId: user.uid,
+      hostId: user?.uid || '',
       state: "creating",
       questions: [],
       currentQuestionIndex: 0,
@@ -1245,5 +1255,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
+
+    
 
     

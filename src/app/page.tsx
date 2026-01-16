@@ -1,15 +1,16 @@
 'use client';
 
-import { useUser } from '@/firebase';
+import { useUser, useAuth } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
-import { Loader2, Trophy } from 'lucide-react';
+import { Loader2, Trophy, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
 
 
 export default function Home() {
   const { user, isUserLoading } = useUser();
+  const auth = useAuth();
   const { isHost, isHostLoading } = useHost(user?.uid);
   const router = useRouter();
 
@@ -43,6 +44,10 @@ export default function Home() {
           <Button onClick={() => router.push('/leaderboard')}>
             <Trophy className="mr-2"/>
             Vai alla Classifica
+          </Button>
+          <Button variant="outline" onClick={() => auth.signOut()}>
+            <LogOut className="mr-2"/>
+            Esci
           </Button>
         </div>
       </div>

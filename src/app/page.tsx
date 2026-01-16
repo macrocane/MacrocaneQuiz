@@ -16,7 +16,7 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    const logoutFlag = 'force_logout_20240725_v4'; // Chiave unica per questa operazione una tantum
+    const logoutFlag = 'force_logout_20240726_v5'; // Chiave unica per questa operazione una tantum
     if (typeof window !== 'undefined') {
       if (!sessionStorage.getItem(logoutFlag)) {
         console.log("Forzo un logout una tantum e pulisco lo stato locale per risolvere potenziali problemi di sessione.");

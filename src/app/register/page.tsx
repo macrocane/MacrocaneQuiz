@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc } from 'firebase/firestore';
-import { useAuth, useFirestore, setDocumentNonBlocking } from '@/firebase';
+import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useAuth, useFirestore } from '@/firebase';
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -23,6 +23,7 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { UserProfile } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
+import { GoogleIcon } from '@/components/icons/google-icon';
 
 const avatarChoices = PlaceHolderImages.filter(img => img.id.startsWith('avatar'));
 
@@ -61,7 +62,7 @@ export default function RegisterPage() {
       };
 
       const userDocRef = doc(firestore, 'users', user.uid);
-      setDocumentNonBlocking(userDocRef, userProfile, {});
+      await setDoc(userDocRef, userProfile);
 
       // 3. Redirect to login or directly to the app
       const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
@@ -70,6 +71,34 @@ export default function RegisterPage() {
 
     } catch (error: any) {
       setError(getFriendlyAuthErrorMessage(error.code));
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setError('');
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      const userDocRef = doc(firestore, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        // New user, redirect to complete their profile
+        router.push('/register/complete-profile');
+      } else {
+        // Existing user, proceed to redirect
+        const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
+        localStorage.removeItem('redirectAfterLogin');
+        router.push(redirectPath);
+      }
+    } catch (error: any) {
+      setError('Registrazione con Google fallita. Riprova.');
+      console.error("Google sign-in error:", error);
     } finally {
         setIsLoading(false);
     }
@@ -165,12 +194,23 @@ export default function RegisterPage() {
             </div>
 
             </CardContent>
-            <CardFooter className="flex-col gap-4">
+            <CardFooter className="flex-col items-start gap-4">
                 <Button className="w-full" type="submit" disabled={isLoading}>
                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Crea Account
                 </Button>
-                <p className="text-xs text-center text-muted-foreground">
+                 <div className="relative w-full">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">O continua con</span>
+                  </div>
+                </div>
+                <Button variant="outline" className="w-full" type="button" onClick={handleGoogleSignIn} disabled={isLoading}>
+                   <GoogleIcon className="mr-2 h-5 w-5" /> Registrati con Google
+                </Button>
+                <p className="w-full text-center text-xs text-muted-foreground">
                     Hai già un account?{' '}
                     <Link href="/login" className="underline underline-offset-2 hover:text-primary">
                     Accedi

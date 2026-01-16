@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { useAuth, useFirestore, setDocumentNonBlocking } from '@/firebase';
-import { doc } from 'firebase/firestore';
+import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { useAuth, useFirestore } from '@/firebase';
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,16 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
-import type { Host } from '@/lib/types';
-
-
-const specialUsers = {
-    'host@quiz.com': 'password',
-    'cohost1@quiz.com': 'password',
-    'cohost2@quiz.com': 'password',
-};
-
-type SpecialUserEmail = keyof typeof specialUsers;
+import { GoogleIcon } from '@/components/icons/google-icon';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -44,53 +35,46 @@ export default function LoginPage() {
     setError('');
     setIsLoading(true);
 
-    const isSpecialUser = Object.keys(specialUsers).includes(email);
-
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
+      await signInWithEmailAndPassword(auth, email, password);
+      // After a successful login, the useHost hook on the main page will determine if the user is a host.
+      // We redirect them to the main page, and it will handle the rest.
+      const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
+      localStorage.removeItem('redirectAfterLogin');
+      router.push(redirectPath);
+      
+    } catch (error: any) {
+      setError(getFriendlyAuthErrorMessage(error.code));
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      if (isSpecialUser) {
-        // Ensure host profile exists
-        const hostDocRef = doc(firestore, 'hosts', user.uid);
-        const hostProfile: Host = {
-            id: user.uid,
-            username: user.email!,
-        };
-        setDocumentNonBlocking(hostDocRef, hostProfile, { merge: true });
-        router.push('/');
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setError('');
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      const userDocRef = doc(firestore, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        // New user, redirect to complete their profile
+        router.push('/register/complete-profile');
       } else {
+        // Existing user, proceed to redirect
         const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
         localStorage.removeItem('redirectAfterLogin');
         router.push(redirectPath);
       }
     } catch (error: any) {
-        // If login fails, check if it's because a special user doesn't exist yet.
-        if (isSpecialUser && password === specialUsers[email as SpecialUserEmail] && (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential')) {
-            try {
-                // Attempt to create the special user
-                const specialUserCredential = await createUserWithEmailAndPassword(auth, email, password);
-                const user = specialUserCredential.user;
-                if (user) {
-                    const hostProfile: Host = {
-                        id: user.uid,
-                        username: user.email!,
-                    };
-                    const hostDocRef = doc(firestore, 'hosts', user.uid);
-                    // Using { merge: true } is safer, it creates or updates.
-                    setDocumentNonBlocking(hostDocRef, hostProfile, { merge: true });
-
-                    router.push('/'); // Redirect to host dashboard after creation
-                }
-            } catch (creationError: any) {
-                 // If creation fails (e.g., email already exists but password was wrong), show generic error
-                 setError(getFriendlyAuthErrorMessage(creationError.code));
-            }
-        } else {
-            setError(getFriendlyAuthErrorMessage(error.code));
-        }
+      setError('Accesso con Google fallito. Riprova.');
+      console.error("Google sign-in error:", error);
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -102,7 +86,7 @@ export default function LoginPage() {
         return 'Email o password non corretti. Riprova.';
       case 'auth/invalid-email':
         return 'L\'indirizzo email non è valido.';
-       case 'auth/email-already-in-use':
+      case 'auth/email-already-in-use':
         return 'Email già in uso, ma la password non è corretta.';
       default:
         return 'Si è verificato un errore durante l\'accesso. Riprova.';
@@ -148,12 +132,23 @@ export default function LoginPage() {
                 />
             </div>
             </CardContent>
-            <CardFooter className="flex-col gap-4">
+            <CardFooter className="flex-col items-start gap-4">
                 <Button className="w-full" type="submit" disabled={isLoading}>
                     {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Accedi
                 </Button>
-                 <div className="text-xs text-center text-muted-foreground space-y-2">
+                 <div className="relative w-full">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">O continua con</span>
+                  </div>
+                </div>
+                <Button variant="outline" className="w-full" type="button" onClick={handleGoogleSignIn} disabled={isLoading}>
+                   <GoogleIcon className="mr-2 h-5 w-5" /> Accedi con Google
+                </Button>
+                 <div className="w-full text-center text-xs text-muted-foreground space-y-2">
                     <p>
                         Non hai un account?{' '}
                         <Link href="/register" className="underline underline-offset-2 hover:text-primary">

@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -112,6 +112,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   
   const [mediaGallery, setMediaGallery] = useState<StoredMedia[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [answers, setAnswers] = useState<Answer[]>([]);
   
 
   const auth = useAuth();
@@ -126,13 +127,33 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
+  const resetQuiz = useCallback(() => {
+    if (isReadOnly || !user) return;
+    setQuizId(null);
+    setQuiz({
+      id: '',
+      name: "Il Mio Quiz Fantastico",
+      hostId: user?.uid || '',
+      state: "creating",
+      questions: [],
+      currentQuestionIndex: 0,
+    });
+    setParticipants([]);
+    setAnswers([]);
+    try {
+      localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
+      localStorage.removeItem(QUIZ_DRAFT_KEY);
+    } catch (error) {
+        console.error("Error clearing session from localStorage:", error);
+    }
+  }, [isReadOnly, user]);
+
+
   useEffect(() => {
-    // This effect runs once on mount to restore session OR initialize.
     try {
       const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
       if (activeQuizId) {
         setQuizId(activeQuizId);
-        // Don't set quiz, let the snapshot listener do it.
         return;
       }
 
@@ -141,36 +162,31 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const draftQuiz = JSON.parse(draftJson) as Quiz;
         if (draftQuiz && draftQuiz.state === 'creating') {
           setQuiz(draftQuiz);
-          return; // Restored from draft
+          return;
         }
       }
 
-      // If we reach here, there's no active quiz and no draft, so we initialize a new one.
       setQuiz({
         id: '',
         name: "Il Mio Quiz Fantastico",
-        hostId: '', // Will be set by the next effect
+        hostId: '',
         state: "creating",
         questions: [],
         currentQuestionIndex: 0,
-        answers: [],
-        participants: [],
       });
     } catch (error) {
       console.error("Error restoring/initializing session from localStorage:", error);
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     }
-  }, []); // The empty dependency array ensures this runs only once on mount.
+  }, []);
 
-  // Effect to update hostId in draft when user loads
   useEffect(() => {
     if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
         setQuiz(prev => prev ? { ...prev, hostId: user.uid } : null);
     }
   }, [user, quiz]);
 
-  // Effect to persist quiz state to localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
@@ -178,7 +194,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
         localStorage.removeItem(QUIZ_DRAFT_KEY);
       } else if (quiz?.state === 'creating') {
-        // Condition to avoid saving empty draft on init
         if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
           localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
         }
@@ -190,7 +205,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   
   useEffect(() => {
     if (!quizDocRef) {
-      // We are in "creating" mode, state is handled by other effects.
       return;
     }
 
@@ -199,7 +213,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const quizData = doc.data() as Quiz;
         setQuiz(quizData);
       } else {
-        // Quiz was deleted on the backend, so reset the view
         toast({
             variant: "destructive",
             title: "Quiz non trovato",
@@ -220,7 +233,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribe();
-  }, [quizDocRef]);
+  }, [quizDocRef, resetQuiz, toast]);
 
 
   useEffect(() => {
@@ -243,10 +256,35 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     return () => unsubscribe();
   }, [participantsColRef]);
 
+  const handleNewAnswer = useCallback(async (answer: Answer) => {
+    if (!quiz || !currentQuestion || isReadOnly) return;
+
+    // The check against the local `answers` state is a quick optimization to avoid re-running detection.
+    if (answers.some(a => a.participantId === answer.participantId && a.questionId === currentQuestion.id)) {
+      return;
+    }
+
+    const { isCheating, reason } = await detectCheating({
+      responseTime: answer.responseTime,
+      answerText: answer.answerText,
+      questionText: currentQuestion.text,
+    });
+    
+    const participant = participants.find(p => p.id === answer.participantId);
+
+    if (isCheating && participant) {
+      toast({
+        variant: "destructive",
+        title: "Potenziale Tentativo di Barare Rilevato!",
+        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
+      });
+    }
+  }, [quiz, currentQuestion, isReadOnly, answers, participants, toast]);
+
 
  useEffect(() => {
     if (!quizId || !quiz?.questions.length) {
-        setQuiz(prev => prev ? ({ ...prev, answers: [] }) : null);
+        setAnswers([]);
         return;
     }
 
@@ -256,21 +294,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         return onSnapshot(questionAnswersColRef, (snapshot) => {
             const newAnswersForQuestion = snapshot.docs.map(doc => doc.data() as Answer);
             
-            setQuiz(prevQuiz => {
-                if (!prevQuiz) return null;
-                const existingAnswers = prevQuiz.answers || [];
-                const otherAnswers = existingAnswers.filter(ans => ans.questionId !== q.id);
+             setAnswers(prevAnswers => {
+                const otherAnswers = prevAnswers.filter(ans => ans.questionId !== q.id);
                 const updatedAnswers = [...otherAnswers, ...newAnswersForQuestion];
 
-                // Cheat detection for new answers
                 newAnswersForQuestion.forEach(ans => {
-                    const alreadyProcessed = existingAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
+                    const alreadyProcessed = prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
                     if (!alreadyProcessed) {
                         handleNewAnswer(ans);
                     }
                 });
 
-                return { ...prevQuiz, answers: updatedAnswers };
+                return updatedAnswers;
             });
 
         }, (err: FirestoreError) => {
@@ -284,7 +319,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribers.forEach(unsub => unsub());
-}, [quizId, quiz?.questions, firestore]);
+}, [quizId, quiz?.questions, firestore, handleNewAnswer]);
 
 
 
@@ -320,7 +355,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 name: participant.name,
                 monthlyScore: participant.score,
                 avatar: participant.avatar,
-                // rank will be calculated client side for display
             });
         }
     });
@@ -423,31 +457,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const questionType = form.watch("type");
   const answerType = form.watch("answerType");
 
-
-  const handleNewAnswer = async (answer: Answer) => {
-    if (!quiz || !currentQuestion || isReadOnly) return;
-
-    if (quiz.answers?.some(a => a.participantId === answer.participantId && a.questionId === currentQuestion.id)) {
-      return;
-    }
-
-    const { isCheating, reason } = await detectCheating({
-      responseTime: answer.responseTime,
-      answerText: answer.answerText,
-      questionText: currentQuestion.text,
-    });
-    
-    const participant = participants.find(p => p.id === answer.participantId);
-
-    if (isCheating && participant) {
-      toast({
-        variant: "destructive",
-        title: "Potenziale Tentativo di Barare Rilevato!",
-        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
-      });
-    }
-  };
-
   const onSubmit = (data: z.infer<typeof questionSchema>) => {
     if (!quiz || isReadOnly) return;
     
@@ -473,7 +482,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     };
     setQuiz(prev => prev ? ({ ...prev, questions: [...prev.questions, newQuestion] }) : null);
     
-    // Reset form while keeping the current type
     const currentType = form.getValues('type');
     const currentAnswerType = form.getValues('answerType');
 
@@ -509,14 +517,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     
     let newScore = parseInt(value, 10);
     if (isNaN(newScore)) {
-        // If the input is cleared or invalid, treat it as 0 to avoid Firestore errors
         newScore = 0;
     }
 
-    const answerToUpdate = quiz.answers?.find(ans => ans.participantId === participantId && ans.questionId === questionId);
+    const answerToUpdate = answers.find(ans => ans.participantId === participantId && ans.questionId === questionId);
     if(answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
-        // Only update if score is different to avoid unnecessary writes.
         if (answerToUpdate.score !== newScore) {
           updateDocumentNonBlocking(answerDocRef, { score: newScore });
         }
@@ -555,21 +561,27 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
       const batch = writeBatch(firestore);
 
-      // Fetch the latest answers for this question directly from Firestore to avoid state lag
+      // GET LATEST DATA FROM FIRESTORE to ensure accuracy
       const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
       const answersSnapshot = await getDocs(answersColRef);
-      const currentQuestionAnswers = answersSnapshot.docs.map(doc => doc.data() as Answer);
       
-      const currentParticipantsState = [...participants];
+      const participantsSnapshot = await getDocs(participantsColRef);
+      const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
       
+      // Map participant scores from the fetched answers
+      const scoresForThisQuestion: Record<string, number> = {};
+      answersSnapshot.docs.forEach(doc => {
+          const answer = doc.data() as Answer;
+          scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
+      });
+
+      // Update total scores in the batch
       currentParticipantsState.forEach(p => {
-        const participantAnswer = currentQuestionAnswers.find(a => a.participantId === p.id);
-        const scoreForThisQuestion = participantAnswer?.score ?? 0;
-        const newTotalScore = p.score + scoreForThisQuestion;
-  
+        const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
         const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
         batch.update(participantRef, { score: newTotalScore });
       });
+
       await batch.commit();
     }
   
@@ -593,28 +605,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       updateDocumentNonBlocking(quizDocRef, {
         state: "results",
       });
-    }
-  };
-
-  const resetQuiz = () => {
-    if (isReadOnly || !user) return;
-    setQuizId(null);
-    setQuiz({
-      id: '',
-      name: "Il Mio Quiz Fantastico",
-      hostId: user?.uid || '',
-      state: "creating",
-      questions: [],
-      currentQuestionIndex: 0,
-      answers: [],
-      participants: [],
-    });
-    setParticipants([]);
-    try {
-      localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
-      localStorage.removeItem(QUIZ_DRAFT_KEY);
-    } catch (error) {
-        console.error("Error clearing session from localStorage:", error);
     }
   };
 
@@ -654,7 +644,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   if (!quiz) {
     return <div className="flex h-screen w-full items-center justify-center"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
   }
-  const currentAnswers = quiz.answers?.filter(a => a.questionId === currentQuestion?.id) || [];
+  const currentAnswers = answers.filter(a => a.questionId === currentQuestion?.id) || [];
 
 
   const renderContent = () => {
@@ -1047,7 +1037,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                     {currentQuestion.options?.map((opt, i) => (
                       <div key={i} className={cn(
                         "p-4 border rounded-lg text-center font-medium",
-                        opt === currentQuestion.correctAnswer ? "bg-green-100 border-green-300 text-green-800" : "bg-background"
+                        quiz.state === 'question-results' && opt === currentQuestion.correctAnswer ? "bg-green-100 border-green-300 text-green-800" : "bg-background"
                       )}>
                         {opt}
                       </div>
@@ -1059,7 +1049,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         <GripVertical className="h-4 w-4" />
                         <AlertTitle>Domanda di Riordino</AlertTitle>
                         <AlertDescription>
-                            I partecipanti devono riordinare un elenco di elementi. Le risposte verranno mostrate di seguito. L'ordine corretto è: {currentQuestion.correctOrder?.join(', ')}
+                            I partecipanti devono riordinare un elenco di elementi. Le risposte verranno mostrate di seguito. {quiz.state === 'question-results' && `L'ordine corretto è: ${currentQuestion.correctOrder?.join(', ')}`}
                         </AlertDescription>
                     </Alert>
                 )}
@@ -1099,9 +1089,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                 <p className="text-sm text-muted-foreground">
                                     Ordine inviato: {answer.answerOrder?.join(', ')}
                                 </p>
+                                {quiz.state === 'question-results' && (
                                 <p className="text-sm font-bold mt-1">
                                     Ordine corretto: {currentQuestion.correctOrder?.join(', ')}
                                 </p>
+                                )}
                             </div>
                           ) : (
                             <p className="text-sm text-muted-foreground">{answer.answerText}</p>
@@ -1260,7 +1252,3 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
-
-    
-
-    

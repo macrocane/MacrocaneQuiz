@@ -49,8 +49,6 @@ export type Quiz = {
   state: "creating" | "lobby" | "live" | "question-results" | "results";
   questions: Question[];
   currentQuestionIndex: number;
-  participants: Participant[];
-  answers: Answer[];
 }
 
 export type StoredMedia = {

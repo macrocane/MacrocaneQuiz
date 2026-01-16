@@ -167,20 +167,23 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         }
       }
 
-      setQuiz({
-        id: '',
-        name: "Il Mio Quiz Fantastico",
-        hostId: '',
-        state: "creating",
-        questions: [],
-        currentQuestionIndex: 0,
-      });
     } catch (error) {
-      console.error("Error restoring/initializing session from localStorage:", error);
+      console.error("Error restoring session from localStorage:", error);
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     }
-  }, [resetQuiz]);
+    
+    // Fallback to a new quiz if nothing is found or on error
+    setQuiz({
+      id: '',
+      name: "Il Mio Quiz Fantastico",
+      hostId: '',
+      state: "creating",
+      questions: [],
+      currentQuestionIndex: 0,
+    });
+
+  }, []);
 
   useEffect(() => {
     if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
@@ -515,19 +518,28 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
      setQuiz(prev => prev ? ({ ...prev, questions: prev.questions.filter((q) => q.id !== id) }) : null);
   };
   
-  const handleScoreChange = (participantId: string, questionId: string, value: string) => {
-    if (!quizDocRef || isReadOnly || !quizId || !quiz) return;
-    
+  const handleScoreChange = async (participantId: string, questionId: string, value: string) => {
+    if (isReadOnly || !quizId || !currentQuestion) return;
+
     let newScore = parseInt(value, 10);
     if (isNaN(newScore)) {
         newScore = 0;
     }
 
     const answerToUpdate = answers.find(ans => ans.participantId === participantId && ans.questionId === questionId);
-    if(answerToUpdate) {
+    if (answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
         if (answerToUpdate.score !== newScore) {
-          updateDocumentNonBlocking(answerDocRef, { score: newScore });
+            try {
+                await updateDoc(answerDocRef, { score: newScore });
+            } catch(e) {
+                console.error("Failed to update score", e);
+                toast({
+                    variant: "destructive",
+                    title: "Errore di salvataggio del punteggio",
+                    description: "Impossibile aggiornare il punteggio, riprovare.",
+                });
+            }
         }
     }
   };

@@ -79,6 +79,14 @@ service cloud.firestore {
       return isSignedIn() && quizDoc.data.hostId == request.auth.uid;
     }
 
+    /**
+     * Returns true if the requesting user exists in the /hosts collection.
+     */
+    function isHost() {
+      return isSignedIn() && exists(/databases/$(database)/documents/hosts/$(request.auth.uid));
+    }
+
+
     // ------------------------------------------------------------------------
     // Collection Rules
     // ------------------------------------------------------------------------
@@ -166,7 +174,7 @@ service cloud.firestore {
           allow get: if resource != null && (isOwner(resource.data.participantId) || isHostOfQuiz(quizId));
           allow list: if isHostOfQuiz(quizId);
           allow create: if isOwner(request.resource.data.participantId);
-          allow update: if resource != null && get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
+          allow update: if resource != null && isHostOfQuiz(quizId); // Host can update score
           allow delete: if resource != null && isHostOfQuiz(quizId);
         }
       }
@@ -182,7 +190,7 @@ service cloud.firestore {
     match /monthly_rankings/{rankingId} {
       allow get: if true;
       allow list: if true;
-      allow write: if false;
+      allow write: if isHost();
     }
   }
 }

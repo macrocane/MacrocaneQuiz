@@ -26,6 +26,7 @@ import {
   Eye,
   LogOut,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -179,7 +180,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     }
-  }, []);
+  }, [resetQuiz]);
 
   useEffect(() => {
     if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
@@ -196,6 +197,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       } else if (quiz?.state === 'creating') {
         if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
           localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
+        } else {
+          localStorage.removeItem(QUIZ_DRAFT_KEY);
         }
       }
     } catch (error) {
@@ -594,14 +597,20 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       });
     } else {
       // End the quiz
-      // Read the final, committed scores to avoid race conditions
-      const finalParticipantsSnapshot = await getDocs(participantsColRef);
-      const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
+      try {
+        const finalParticipantsSnapshot = await getDocs(participantsColRef);
+        const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
+        
+        await updateLeaderboard(finalParticipants);
+      } catch (error) {
+          console.error("Leaderboard update failed:", error);
+          toast({
+              variant: "destructive",
+              title: "Errore Classifica",
+              description: "Impossibile aggiornare la classifica mensile. Il quiz è terminato.",
+          });
+      }
       
-      // Pass this guaranteed-correct data to updateLeaderboard
-      await updateLeaderboard(finalParticipants);
-      
-      // Set the final quiz state
       updateDocumentNonBlocking(quizDocRef, {
         state: "results",
       });
@@ -1157,7 +1166,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                   </AlertDialog>
                 )}
                  {quiz.state === 'live' && (
-                  <Button onClick={showQuestionResults} disabled={currentAnswers.length === 0 || isReadOnly}>
+                  <Button onClick={showQuestionResults} disabled={isReadOnly}>
                     <Eye className="mr-2" />
                     Mostra Risposte
                   </Button>
@@ -1223,6 +1232,26 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             </div>
             <div className="ml-auto flex items-center gap-4">
                 <h1 className="text-lg font-semibold md:text-2xl font-headline capitalize truncate">{getQuizStateLabel()}</h1>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="icon" title="Reset Sessione">
+                      <RefreshCw className="h-5 w-5" />
+                      <span className="sr-only">Reset Sessione</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Sei sicuro di voler resettare la sessione?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Questa azione è utile se l'interfaccia sembra bloccata. Cancellerà la bozza o il quiz attivo dalla memoria locale, permettendoti di ricominciare. Non eliminerà i dati già salvati su Firestore.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Annulla</AlertDialogCancel>
+                      <AlertDialogAction onClick={resetQuiz}>Sì, resetta</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
                 <Button variant="ghost" size="icon" onClick={() => auth.signOut()}>
                     <LogOut className="h-5 w-5" />
                     <span className="sr-only">Esci</span>
@@ -1252,3 +1281,5 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
+
+    

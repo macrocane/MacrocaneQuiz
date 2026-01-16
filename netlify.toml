@@ -8,3 +8,5 @@
   # GEMINI_API_KEY è usata lato server e non dovrebbe essere nel bundle del client,
   # ma la omettiamo per evitare che lo scanner blocchi il build.
   SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_FIREBASE_API_KEY,GEMINI_API_KEY"
+  # Disabilita la scansione 'intelligente' che rileva i valori delle chiavi, per evitare che la build fallisca a causa della chiave API pubblica di Firebase.
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"

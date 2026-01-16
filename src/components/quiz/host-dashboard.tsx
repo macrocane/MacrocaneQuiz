@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference } from 'firebase/firestore';
 import {
   ArrowRight,
   ClipboardPlus,
@@ -151,6 +151,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     try {
       const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
       if (activeQuizId) {
@@ -183,7 +185,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             currentQuestionIndex: 0,
         });
     }
-
   }, []);
 
   useEffect(() => {
@@ -635,7 +636,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
           toast({
               variant: "destructive",
               title: "Errore Finale",
-              description: "Impossibile terminare il quiz o aggiornare la classifica. Controlla le regole di Firestore.",
+              description: "Impossibile terminare il quiz o aggiornare la classifica.",
           });
           updateDocumentNonBlocking(quizDocRef, { state: "results" });
       }
@@ -1205,7 +1206,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
           </div>
         );
       case "results":
-        const finalParticipants = participants.sort((a,b) => b.score - a.score);
+        const finalParticipants = [...participants].sort((a,b) => b.score - a.score);
         return (
           <Card className="text-center">
             <CardHeader>

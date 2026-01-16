@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Trophy, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
+import { useEffect } from 'react';
 
 
 export default function Home() {
@@ -13,6 +14,19 @@ export default function Home() {
   const auth = useAuth();
   const { isHost, isHostLoading } = useHost(user?.uid);
   const router = useRouter();
+
+  useEffect(() => {
+    const logoutFlag = 'force_logout_20240725_v3'; // Chiave unica per questa operazione una tantum
+    if (typeof window !== 'undefined') {
+      if (!sessionStorage.getItem(logoutFlag)) {
+        console.log("Forzo un logout una tantum e pulisco lo stato locale per risolvere potenziali problemi di sessione.");
+        localStorage.removeItem('active-quiz-id');
+        localStorage.removeItem('quiz-draft');
+        auth.signOut();
+        sessionStorage.setItem(logoutFlag, 'true');
+      }
+    }
+  }, [auth]);
 
   if (isUserLoading || isHostLoading) {
     return (

@@ -173,7 +173,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     }
     
-    // Fallback to a new quiz if nothing is found or on error
     if (!quiz) {
         setQuiz({
             id: '',
@@ -267,7 +266,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const handleNewAnswer = useCallback(async (answer: Answer) => {
     if (!quiz || !currentQuestion || isReadOnly) return;
 
-    // The check against the local `answers` state is a quick optimization to avoid re-running detection.
     if (answers.some(a => a.participantId === answer.participantId && a.questionId === currentQuestion.id)) {
       return;
     }
@@ -303,12 +301,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             const newAnswersForQuestion = snapshot.docs.map(doc => doc.data() as Answer);
             
              setAnswers(prevAnswers => {
-                // Find answers that are not for the current question
                 const otherAnswers = prevAnswers.filter(ans => ans.questionId !== q.id);
-                // Combine them with the new answers for the current question
                 const updatedAnswers = [...otherAnswers, ...newAnswersForQuestion];
-
-                // For each new answer, check if we've seen it before to avoid re-running cheat detection
                 newAnswersForQuestion.forEach(ans => {
                     const alreadyProcessed = prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
                     if (!alreadyProcessed) {
@@ -379,7 +373,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             title: "Errore Classifica",
             description: "Impossibile aggiornare la classifica mensile. Controlla le regole di Firestore.",
         });
-        // Re-throw to be caught by the caller if needed
         throw error;
     }
   };
@@ -467,7 +460,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       type: "multiple-choice",
       options: [{ value: "" }, { value: "" }, { value: "" }, { value: "" }],
       correctAnswer: "0",
-      answerType: 'multiple-choice',
     },
   });
 
@@ -505,28 +497,13 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     };
     setQuiz(prev => prev ? ({ ...prev, questions: [...prev.questions, newQuestion] }) : null);
     
-    const currentType = form.getValues('type');
-    const currentAnswerType = form.getValues('answerType');
-
-    let defaultOptions: {value: string}[] = [];
-    let defaultCorrectAnswer: string | undefined = undefined;
-
-    if (currentType === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentType) && currentAnswerType === 'multiple-choice')) {
-      defaultOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
-      defaultCorrectAnswer = "0";
-    } else if (currentType === 'reorder') {
-      defaultOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
-    } else {
-       defaultCorrectAnswer = '';
-    }
-
     form.reset({
       text: "",
-      type: currentType,
-      answerType: currentAnswerType,
+      type: form.getValues('type'),
+      answerType: form.getValues('answerType'),
       mediaUrl: '',
-      options: defaultOptions,
-      correctAnswer: defaultCorrectAnswer,
+      options: form.getValues('options'),
+      correctAnswer: form.getValues('correctAnswer'),
     });
   };
 
@@ -547,7 +524,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
         
-        // This is now a blocking call to ensure data consistency before proceeding.
         try {
             await updateDoc(answerDocRef, { score: newScore });
         } catch(e) {
@@ -565,7 +541,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (!quiz || isReadOnly || !user) return;
     const newQuizId = uuidv4().slice(0, 8);
     
-    // Create a new Quiz object for Firestore, ensuring all necessary fields are present
     const newQuizState: Quiz = {
       id: newQuizId,
       name: quiz.name,
@@ -580,7 +555,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     
     const newQuizDocRef = doc(firestore, "quizzes", newQuizId);
     
-    // Use setDoc which is more robust for creating a new document with a specific ID
     setDoc(newQuizDocRef, newQuizState).catch(error => {
       console.error("Error creating quiz document:", error);
       const contextualError = new FirestorePermissionError({
@@ -608,26 +582,22 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const nextQuestion = async () => {
     if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId || !participantsColRef) return;
   
-    // 1. Finalize and commit scores for the current question
     if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
       try {
         const batch = writeBatch(firestore);
 
-        // GET LATEST DATA FROM FIRESTORE to ensure accuracy
         const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
         const answersSnapshot = await getDocs(answersColRef);
         
         const participantsSnapshot = await getDocs(participantsColRef);
         const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
         
-        // Map participant scores from the fetched answers
         const scoresForThisQuestion: Record<string, number> = {};
         answersSnapshot.docs.forEach(doc => {
             const answer = doc.data() as Answer;
             scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
         });
 
-        // Update total scores in the batch
         currentParticipantsState.forEach(p => {
           const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
           const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
@@ -642,22 +612,17 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             title: "Errore di Sincronizzazione",
             description: "Impossibile salvare i punteggi della domanda corrente.",
         });
-        // We don't proceed if scores can't be saved.
         return;
       }
     }
   
-    // 2. Decide if we move to the next question or end the quiz
     if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
-      // Go to the next question
       updateDocumentNonBlocking(quizDocRef, {
         state: "live",
         currentQuestionIndex: quiz.currentQuestionIndex + 1,
       });
     } else {
-      // End the quiz
       try {
-        // Fetch the final, updated participant data
         const finalParticipantsSnapshot = await getDocs(participantsColRef);
         const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
         
@@ -672,7 +637,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
               title: "Errore Finale",
               description: "Impossibile terminare il quiz o aggiornare la classifica. Controlla le regole di Firestore.",
           });
-          // Even if leaderboard fails, try to end the quiz state to unblock the host
           updateDocumentNonBlocking(quizDocRef, { state: "results" });
       }
     }
@@ -777,17 +741,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormLabel>Tipo di Domanda</FormLabel>
                                     <Select 
                                         onValueChange={(newType) => {
-                                            field.onChange(newType); // Update RHF state
-                                            
+                                            field.onChange(newType);
                                             const isMediaType = ['image', 'video', 'audio'].includes(newType);
 
                                             if (isMediaType) {
-                                                // When switching to a media type, default the answer type
                                                 form.setValue('answerType', 'multiple-choice');
                                                 form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
                                                 form.setValue('correctAnswer', '0');
                                             } else {
-                                                // When switching to a non-media type, clear media fields
                                                 form.setValue('answerType', undefined);
                                                 form.setValue('mediaUrl', '');
                                                 

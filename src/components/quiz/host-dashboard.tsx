@@ -342,30 +342,41 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const updateLeaderboard = async (quizResults: Participant[]) => {
     if (isReadOnly) return;
+    
+    try {
+        const rankingsSnapshot = await getDocs(rankingsColRef);
+        const currentRankings: LeaderboardEntry[] = rankingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
+        const batch = writeBatch(firestore);
 
-    const rankingsSnapshot = await getDocs(rankingsColRef);
-    const currentRankings: LeaderboardEntry[] = rankingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
-    const batch = writeBatch(firestore);
+        quizResults.forEach(participant => {
+            const existingEntry = currentRankings.find(entry => entry.name === participant.name);
 
-    quizResults.forEach(participant => {
-        const existingEntry = currentRankings.find(entry => entry.name === participant.name);
+            if (existingEntry && existingEntry.id) {
+                const rankDocRef = doc(firestore, 'monthly_rankings', existingEntry.id);
+                batch.update(rankDocRef, {
+                    monthlyScore: existingEntry.monthlyScore + participant.score
+                });
+            } else {
+                const newRankDocRef = doc(collection(firestore, 'monthly_rankings'));
+                batch.set(newRankDocRef, {
+                    name: participant.name,
+                    monthlyScore: participant.score,
+                    avatar: participant.avatar,
+                });
+            }
+        });
 
-        if (existingEntry && existingEntry.id) {
-            const rankDocRef = doc(firestore, 'monthly_rankings', existingEntry.id);
-            batch.update(rankDocRef, {
-                monthlyScore: existingEntry.monthlyScore + participant.score
-            });
-        } else {
-            const newRankDocRef = doc(collection(firestore, 'monthly_rankings'));
-            batch.set(newRankDocRef, {
-                name: participant.name,
-                monthlyScore: participant.score,
-                avatar: participant.avatar,
-            });
-        }
-    });
-
-    await batch.commit();
+        await batch.commit();
+    } catch (error) {
+        console.error("Leaderboard update failed:", error);
+        toast({
+            variant: "destructive",
+            title: "Errore Classifica",
+            description: "Impossibile aggiornare la classifica mensile. Controlla le regole di Firestore.",
+        });
+        // Re-throw to be caught by the caller if needed
+        throw error;
+    }
   };
 
   const resetLeaderboard = async () => {
@@ -463,6 +474,45 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const questionType = form.watch("type");
   const answerType = form.watch("answerType");
 
+  // This effect handles the dependent logic for question type changes.
+  useEffect(() => {
+    const newType = questionType;
+    let newOptions: { value: string }[] = [];
+    let newCorrectAnswer: string | undefined = undefined;
+
+    if (newType === 'multiple-choice' || newType === 'reorder') {
+      newOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
+      newCorrectAnswer = newType === 'multiple-choice' ? "0" : undefined;
+    } else if (newType === 'open-ended') {
+      newCorrectAnswer = '';
+    }
+    
+    const currentAnswerType = form.getValues('answerType');
+    // Only reset if the type isn't a media type, or if it is and we need to set a default.
+    if (!['image', 'video', 'audio'].includes(newType)) {
+      form.setValue('answerType', undefined);
+      form.setValue('options', newOptions);
+      form.setValue('correctAnswer', newCorrectAnswer);
+    } else if (!currentAnswerType) {
+       form.setValue('answerType', 'multiple-choice');
+    }
+  }, [questionType]);
+
+  // This effect handles the dependent logic for answer type changes (for media questions).
+  useEffect(() => {
+    const isMediaType = ['image', 'video', 'audio'].includes(form.getValues('type'));
+    if (!isMediaType || !answerType) return;
+
+    if (answerType === 'multiple-choice') {
+      form.setValue('options', [{ value: "" }, { value: "" }, { value: "" }, { value: "" }]);
+      form.setValue('correctAnswer', "0");
+    } else {
+      form.setValue('options', []);
+      form.setValue('correctAnswer', '');
+    }
+  }, [answerType]);
+
+
   const onSubmit = (data: z.infer<typeof questionSchema>) => {
     if (!quiz || isReadOnly) return;
     
@@ -529,17 +579,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     const answerToUpdate = answers.find(ans => ans.participantId === participantId && ans.questionId === questionId);
     if (answerToUpdate) {
         const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
-        if (answerToUpdate.score !== newScore) {
-            try {
-                await updateDoc(answerDocRef, { score: newScore });
-            } catch(e) {
-                console.error("Failed to update score", e);
-                toast({
-                    variant: "destructive",
-                    title: "Errore di salvataggio del punteggio",
-                    description: "Impossibile aggiornare il punteggio, riprovare.",
-                });
-            }
+        
+        try {
+            await updateDoc(answerDocRef, { score: newScore });
+        } catch(e) {
+            console.error("Failed to update score", e);
+            toast({
+                variant: "destructive",
+                title: "Errore di salvataggio del punteggio",
+                description: "Impossibile aggiornare il punteggio, riprovare.",
+            });
         }
     }
   };
@@ -614,18 +663,17 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
         
         await updateLeaderboard(finalParticipants);
+        
+        updateDocumentNonBlocking(quizDocRef, { state: "results" });
+
       } catch (error) {
-          console.error("Leaderboard update failed:", error);
+          console.error("Leaderboard update or quiz end failed:", error);
           toast({
               variant: "destructive",
-              title: "Errore Classifica",
-              description: "Impossibile aggiornare la classifica mensile. Il quiz è terminato.",
+              title: "Errore Finale",
+              description: "Impossibile terminare il quiz o aggiornare la classifica.",
           });
       }
-      
-      updateDocumentNonBlocking(quizDocRef, {
-        state: "results",
-      });
     }
   };
 
@@ -727,30 +775,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Domanda</FormLabel>
                                     <Select 
-                                        onValueChange={(value) => {
-                                            field.onChange(value);
-                                            const newType = value as Question['type'];
-                                            const currentAnswerType = form.getValues('answerType');
-                                            
-                                            let newOptions: {value: string}[] = [];
-                                            let newCorrectAnswer: string | undefined = undefined;
-
-                                            if (newType === 'multiple-choice' || (['image', 'video', 'audio'].includes(newType) && currentAnswerType === 'multiple-choice')) {
-                                                newOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
-                                                newCorrectAnswer = "0";
-                                            } else if (newType === 'reorder') {
-                                                newOptions = [{ value: "" }, { value: "" }, { value: "" }, { value: "" }];
-                                            }
-
-                                            form.setValue('options', newOptions);
-                                            form.setValue('correctAnswer', newCorrectAnswer);
-
-                                            if (!['image', 'video', 'audio'].includes(newType)) {
-                                                form.setValue('answerType', undefined);
-                                            } else {
-                                                form.setValue('answerType', 'multiple-choice');
-                                            }
-                                        }} 
+                                        onValueChange={field.onChange}
                                         defaultValue={field.value} 
                                         disabled={isReadOnly}
                                     >
@@ -780,18 +805,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Risposta</FormLabel>
                                     <Select 
-                                        onValueChange={(value) => {
-                                            field.onChange(value);
-                                            const newAnswerType = value as 'multiple-choice' | 'open-ended';
-                                            if (newAnswerType === 'multiple-choice') {
-                                                form.setValue('options', [{ value: "" }, { value: "" }, { value: "" }, { value: "" }]);
-                                                form.setValue('correctAnswer', "0");
-                                            } else {
-                                                form.setValue('options', []);
-                                                form.setValue('correctAnswer', ''); // Reset to empty string for open-ended
-                                            }
-                                        }} 
+                                        onValueChange={field.onChange}
                                         defaultValue={field.value} 
+                                        value={field.value}
                                         disabled={isReadOnly}
                                     >
                                         <FormControl>
@@ -943,7 +959,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem className="mt-6">
                                     <FormLabel>Risposta corretta (opzionale)</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="Inserisci la risposta di riferimento" {...field} disabled={isReadOnly} />
+                                        <Input placeholder="Inserisci la risposta di riferimento" {...field} value={field.value ?? ""} disabled={isReadOnly} />
                                     </FormControl>
                                      <FormDescription>
                                         Questa risposta verrà mostrata ai partecipanti dopo la domanda.

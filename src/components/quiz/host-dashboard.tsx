@@ -34,7 +34,7 @@ import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia
 import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter, useUser, useCollection } from '@/firebase';
+import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 import {
@@ -272,13 +272,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     },
     (err: FirestoreError) => {
       console.error("Error listening to quiz document:", err);
-      if (quizDocRef) {
-          const contextualError = new FirestorePermissionError({
-            operation: 'get',
-            path: quizDocRef.path,
-          });
-          errorEmitter.emit('permission-error', contextualError);
-      }
+      toast({
+        variant: "destructive",
+        title: "Errore di connessione",
+        description: "Impossibile caricare i dati del quiz. Controlla i permessi di Firestore.",
+      });
     });
 
     return () => unsubscribe();
@@ -294,13 +292,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       setParticipants(snapshot.docs.map(doc => doc.data() as Participant));
     }, (err: FirestoreError) => {
       console.error("Error listening to participants collection:", err);
-      if (participantsColRef) {
-          const contextualError = new FirestorePermissionError({
-            operation: 'list',
-            path: participantsColRef.path,
-          });
-          errorEmitter.emit('permission-error', contextualError);
-      }
     });
     return () => unsubscribe();
   }, [participantsColRef]);
@@ -340,11 +331,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
         }, (err: FirestoreError) => {
             console.error(`Error listening to answers for question ${q.id}:`, err);
-            const contextualError = new FirestorePermissionError({
-                operation: 'list',
-                path: questionAnswersColRef.path,
-            });
-            errorEmitter.emit('permission-error', contextualError);
         });
     });
 
@@ -584,12 +570,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       setInviteLink(`${window.location.origin}/join/${newQuizId}`);
     } catch (error) {
       console.error("Error creating quiz document:", error);
-      const contextualError = new FirestorePermissionError({
-        path: newQuizDocRef.path,
-        operation: 'create',
-        requestResourceData: newQuizState,
+      toast({
+        variant: "destructive",
+        title: "Errore di Creazione Quiz",
+        description: "Impossibile creare il quiz. Controlla i permessi di Firestore.",
       });
-      errorEmitter.emit('permission-error', contextualError);
     }
   };
 

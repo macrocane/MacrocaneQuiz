@@ -126,6 +126,8 @@ export default function RegisterPage() {
         return 'Sono state effettuate troppe richieste di registrazione. Riprova più tardi.';
       case 'auth/popup-blocked':
         return 'Il pop-up è stato bloccato dal browser. Abilita i pop-up per questo sito e riprova.';
+      case 'auth/unauthorized-domain':
+        return 'Questo dominio non è autorizzato per l\'accesso con Google. Aggiungilo nella console di Firebase.';
       default:
         console.error(`Unhandled Google Auth Error: ${errorCode}`);
         return `Registrazione con Google fallita (codice: ${errorCode}). Controlla che il dominio sia autorizzato nella console di Firebase.`;

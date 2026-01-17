@@ -8,7 +8,7 @@ import { useHost } from '@/hooks/use-host';
 import { AppSettings } from '@/lib/types';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, BookText, ArrowLeft, Save } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -37,7 +37,7 @@ export default function RulesPage() {
     if (isReadOnly) return;
     setIsSaving(true);
     try {
-      await setDoc(settingsDocRef, { rules });
+      await setDoc(settingsDocRef, { rules }, { merge: true });
       toast({
         title: 'Regolamento Salvato',
         description: 'Le modifiche al regolamento sono state salvate con successo.',

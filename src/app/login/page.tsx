@@ -102,6 +102,8 @@ export default function LoginPage() {
         return 'Sono state effettuate troppe richieste di accesso. Riprova più tardi.';
       case 'auth/popup-blocked':
         return 'Il pop-up è stato bloccato dal browser. Abilita i pop-up per questo sito e riprova.';
+      case 'auth/unauthorized-domain':
+        return 'Questo dominio non è autorizzato per l\'accesso con Google. Aggiungilo nella console di Firebase.';
       default:
         console.error(`Unhandled Google Auth Error: ${errorCode}`);
         return `Accesso con Google fallito (codice: ${errorCode}). Controlla che il dominio sia autorizzato nella console di Firebase.`;

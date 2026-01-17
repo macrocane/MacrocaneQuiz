@@ -92,10 +92,10 @@ service cloud.firestore {
     }
 
     // App settings, like the rulebook.
-    // Reading is allowed for any signed-in user.
+    // Reading is public.
     // Writing is restricted to the main host email.
     match /settings/main {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isMainHost();
     }
   }

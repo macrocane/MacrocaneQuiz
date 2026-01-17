@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc } from 'firebase/firestore';
 import {
   ArrowRight,
   ClipboardPlus,

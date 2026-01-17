@@ -1,8 +1,9 @@
 
 "use client";
 
-import { Users, Trophy, Trash2 } from "lucide-react";
+import { Users, Trophy, Trash2, BookText } from "lucide-react";
 import type { Participant, LeaderboardEntry } from "@/lib/types";
+import Link from "next/link";
 
 import {
   SidebarGroup,
@@ -10,6 +11,7 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarGroupAction,
+  SidebarMenuButton,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
@@ -70,6 +72,22 @@ export default function ParticipantsSidebar({
           ) : (
             <p className="text-sm text-muted-foreground px-2">Ancora nessun partecipante.</p>
           )}
+        </SidebarMenu>
+      </SidebarGroup>
+      <Separator className="my-2"/>
+       <SidebarGroup>
+        <SidebarGroupLabel className="flex items-center gap-2">
+          <BookText className="h-5 w-5" />
+          Regolamento
+        </SidebarGroupLabel>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link href="/rules">
+                Visualizza o Modifica
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
       <Separator className="my-2"/>

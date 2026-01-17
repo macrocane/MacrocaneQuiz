@@ -196,5 +196,17 @@ service cloud.firestore {
       allow list: if true;
       allow write: if isHost();
     }
+
+     /**
+     * @description Controls access to global app settings, like the rules.
+     * @path /settings/{settingId}
+     * @allow (get) Any signed-in user can read the rules.
+     * @deny (write) A participant or co-host tries to change the rules.
+     * @principle Protects critical settings by restricting writes to a single admin role.
+     */
+    match /settings/{settingId} {
+      allow get: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.token.email == 'host@quiz.com';
+    }
   }
 }

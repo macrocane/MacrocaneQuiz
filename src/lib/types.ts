@@ -65,3 +65,7 @@ export type UserProfile = {
     nickname: string;
     icon: string;
 };
+
+export type AppSettings = {
+  rules: string;
+};

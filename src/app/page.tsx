@@ -3,10 +3,11 @@
 import { useUser, useAuth } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
-import { Loader2, Trophy, LogOut } from 'lucide-react';
+import { Loader2, Trophy, LogOut, BookText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 
 export default function Home() {
@@ -54,10 +55,16 @@ export default function Home() {
       <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center">
         <h1 className="text-2xl font-bold">Accesso Partecipante</h1>
         <p className="text-muted-foreground">Sei loggato come partecipante. Usa un link d'invito per unirti a un quiz o controlla la classifica.</p>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap justify-center gap-4">
           <Button onClick={() => router.push('/leaderboard')}>
             <Trophy className="mr-2"/>
             Vai alla Classifica
+          </Button>
+          <Button variant="secondary" asChild>
+            <Link href="/rules">
+              <BookText className="mr-2"/>
+              Regolamento
+            </Link>
           </Button>
           <Button variant="outline" onClick={() => auth.signOut()}>
             <LogOut className="mr-2"/>

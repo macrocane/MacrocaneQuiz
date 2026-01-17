@@ -4,38 +4,20 @@ service cloud.firestore {
 
     // --- Helper Functions ---
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    // A user is a host if a document exists for them in the /hosts collection.
-    // This is the single source of truth for host status.
-    function isHost(userId) {
-      return exists(/databases/$(database)/documents/hosts/$(userId));
-    }
-
-    // A user is the host of a specific quiz if their UID matches the hostId in the quiz document.
-    function isHostOfQuiz(quizId) {
-      return isSignedIn() &&
-             exists(/databases/$(database)/documents/quizzes/$(quizId)) &&
-             get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
+      return request.auth != null && request.auth.uid == userId;
     }
     
-    // Special permissions for the main host account.
     function isMainHost() {
         return request.auth.token.email == 'host@quiz.com';
     }
 
     // --- Collection Rules ---
 
-    // Host documents can only be read or modified by the owner.
-    // Creation is handled client-side on first admin login.
+    // Host documents can be read by anyone (for debugging), but only created/modified by the owner.
     match /hosts/{hostId} {
-      allow read, write: if isOwner(hostId);
+      allow read: if true;
+      allow write: if isOwner(hostId);
     }
 
     // User profiles are private.
@@ -47,39 +29,38 @@ service cloud.firestore {
 
     // Quiz documents and their subcollections.
     match /quizzes/{quizId} {
-      // Any signed-in user can read quiz data (needed for participants).
-      allow read: if isSignedIn();
-      // Only a registered host can create a quiz.
-      allow create: if isHost(request.auth.uid) && isOwner(request.resource.data.hostId);
-      // Only the designated host of this specific quiz can update or delete it.
-      allow update, delete: if isHostOfQuiz(quizId);
+      // Any user can read quiz data.
+      allow read: if true;
+      // A quiz can be created by a user who is a registered host.
+      allow create: if exists(/databases/$(database)/documents/hosts/$(request.auth.uid)) && isOwner(request.resource.data.hostId);
+      // The host of the quiz can update or delete it.
+      allow update, delete: if get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
 
       // Rules for participants joining a quiz.
       match /participants/{participantId} {
-        allow read: if isSignedIn();
+        // Participant data is public within a quiz context.
+        allow read: if true;
         // A user can join a quiz (create their participant document).
         allow create: if isOwner(participantId);
         // A participant can update their own data, or the host can.
-        allow update: if isOwner(participantId) || isHostOfQuiz(quizId);
+        allow update: if isOwner(participantId) || get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
         // Only the host can remove participants.
-        allow delete: if isHostOfQuiz(quizId);
+        allow delete: if get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
       }
 
-      // Questions can only be managed by the quiz host.
+      // Questions can be read by anyone, but only managed by the quiz host.
       match /questions/{questionId} {
-        allow read: if isSignedIn();
-        allow write: if isHostOfQuiz(quizId);
+        allow read: if true;
+        allow write: if get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
         
         // Answers to a specific question.
         match /answers/{answerId} {
-          // An answer can be seen by the participant who gave it or the quiz host.
-          allow get: if (resource != null && isOwner(resource.data.participantId)) || isHostOfQuiz(quizId);
-          // Only the host can list all answers for a question (for grading/results).
-          allow list: if isHostOfQuiz(quizId);
+          // All answers are public to read.
+          allow read: if true;
           // A participant can create their own answer.
           allow create: if isOwner(request.resource.data.participantId);
           // Only the host can modify an answer (e.g., for manual scoring).
-          allow update, delete: if isHostOfQuiz(quizId);
+          allow update, delete: if get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
         }
       }
     }
@@ -88,12 +69,10 @@ service cloud.firestore {
     // Writing is restricted to registered hosts.
     match /monthly_rankings/{rankingId} {
       allow read: if true;
-      allow write: if isHost(request.auth.uid);
+      allow write: if exists(/databases/$(database)/documents/hosts/$(request.auth.uid));
     }
 
-    // App settings, like the rulebook.
-    // Reading is public.
-    // Writing is restricted to the main host email.
+    // App settings, like the rulebook. Reading is public.
     match /settings/main {
       allow read: if true;
       allow write: if isMainHost();

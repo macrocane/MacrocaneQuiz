@@ -75,7 +75,9 @@ service cloud.firestore {
      */
     function isHostOfQuiz(quizId) {
       let quizDoc = get(/databases/$(database)/documents/quizzes/$(quizId));
-      return isSignedIn() && quizDoc.data.hostId == request.auth.uid;
+      // Check for document existence before trying to access its data.
+      // This prevents errors if rules are evaluated before a document is created.
+      return isSignedIn() && quizDoc != null && quizDoc.data.hostId == request.auth.uid;
     }
 
     /**

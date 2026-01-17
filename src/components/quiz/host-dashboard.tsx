@@ -282,7 +282,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribe();
-  }, [quizDocRef]); // Removed resetQuiz and toast from deps to fix loop
+  }, [quizDocRef, resetQuiz, toast]);
 
 
   useEffect(() => {
@@ -562,7 +562,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
   };
 
-  const startQuiz = () => {
+  const startQuiz = async () => {
     if (!quiz || isReadOnly || !user) return;
     const newQuizId = uuidv4().slice(0, 8);
     
@@ -575,12 +575,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       currentQuestionIndex: 0,
     };
     
-    setQuizId(newQuizId);
-    setInviteLink(`${window.location.origin}/join/${newQuizId}`);
-    
     const newQuizDocRef = doc(firestore, "quizzes", newQuizId);
     
-    setDoc(newQuizDocRef, newQuizState).catch(error => {
+    try {
+      await setDoc(newQuizDocRef, newQuizState);
+      // Only set quizId and inviteLink AFTER the document is confirmed to be created
+      setQuizId(newQuizId);
+      setInviteLink(`${window.location.origin}/join/${newQuizId}`);
+    } catch (error) {
       console.error("Error creating quiz document:", error);
       const contextualError = new FirestorePermissionError({
         path: newQuizDocRef.path,
@@ -588,7 +590,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         requestResourceData: newQuizState,
       });
       errorEmitter.emit('permission-error', contextualError);
-    });
+    }
   };
 
   const beginQuiz = () => {
@@ -767,7 +769,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <Select 
                                         onValueChange={(value) => {
                                             field.onChange(value);
-                                            // Logic moved here for stability
                                             if (value === 'multiple-choice' || value === 'reorder') {
                                                 form.setValue('answerType', undefined);
                                             } else if (value === 'open-ended') {
@@ -808,7 +809,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <Select 
                                         onValueChange={(value) => {
                                             field.onChange(value);
-                                            // Logic moved here for stability
                                             if (value === 'open-ended') {
                                                 form.setValue('options', []);
                                             }

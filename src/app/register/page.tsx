@@ -97,7 +97,8 @@ export default function RegisterPage() {
         router.push(redirectPath);
       }
     } catch (error: any) {
-      setError('Registrazione con Google fallita. Riprova.');
+      const friendlyMessage = getFriendlyGoogleAuthErrorMessage(error.code);
+      setError(friendlyMessage);
       console.error("Google sign-in error:", error);
     } finally {
         setIsLoading(false);
@@ -114,6 +115,20 @@ export default function RegisterPage() {
         return 'L\'indirizzo email non è valido.';
       default:
         return 'Si è verificato un errore durante la registrazione. Riprova.';
+    }
+  };
+
+  const getFriendlyGoogleAuthErrorMessage = (errorCode: string) => {
+    switch (errorCode) {
+      case 'auth/popup-closed-by-user':
+        return 'Il pop-up di registrazione è stato chiuso prima del completamento. Riprova.';
+      case 'auth/cancelled-popup-request':
+        return 'Sono state effettuate troppe richieste di registrazione. Riprova più tardi.';
+      case 'auth/popup-blocked':
+        return 'Il pop-up è stato bloccato dal browser. Abilita i pop-up per questo sito e riprova.';
+      default:
+        console.error(`Unhandled Google Auth Error: ${errorCode}`);
+        return `Registrazione con Google fallita (codice: ${errorCode}). Controlla che il dominio sia autorizzato nella console di Firebase.`;
     }
   };
 

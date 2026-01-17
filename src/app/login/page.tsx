@@ -71,7 +71,8 @@ export default function LoginPage() {
         router.push(redirectPath);
       }
     } catch (error: any) {
-      setError('Accesso con Google fallito. Riprova.');
+      const friendlyMessage = getFriendlyGoogleAuthErrorMessage(error.code);
+      setError(friendlyMessage);
       console.error("Google sign-in error:", error);
     } finally {
       setIsLoading(false);
@@ -90,6 +91,20 @@ export default function LoginPage() {
         return 'Email già in uso, ma la password non è corretta.';
       default:
         return 'Si è verificato un errore durante l\'accesso. Riprova.';
+    }
+  };
+
+  const getFriendlyGoogleAuthErrorMessage = (errorCode: string) => {
+    switch (errorCode) {
+      case 'auth/popup-closed-by-user':
+        return 'Il pop-up di accesso è stato chiuso prima del completamento. Riprova.';
+      case 'auth/cancelled-popup-request':
+        return 'Sono state effettuate troppe richieste di accesso. Riprova più tardi.';
+      case 'auth/popup-blocked':
+        return 'Il pop-up è stato bloccato dal browser. Abilita i pop-up per questo sito e riprova.';
+      default:
+        console.error(`Unhandled Google Auth Error: ${errorCode}`);
+        return `Accesso con Google fallito (codice: ${errorCode}). Controlla che il dominio sia autorizzato nella console di Firebase.`;
     }
   };
 

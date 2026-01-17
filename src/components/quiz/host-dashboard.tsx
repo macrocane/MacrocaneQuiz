@@ -594,13 +594,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const nextQuestion = async () => {
     if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId || !participantsColRef) return;
   
+    // Always aggregate scores for the current question before moving on.
     if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
       try {
         const batch = writeBatch(firestore);
-
+        
+        // Fetch the most recent answers for the current question
         const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
         const answersSnapshot = await getDocs(answersColRef);
         
+        // Fetch the most recent participant data
         const participantsSnapshot = await getDocs(participantsColRef);
         const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
         
@@ -610,6 +613,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
         });
 
+        // Update total scores in the batch
         currentParticipantsState.forEach(p => {
           const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
           const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
@@ -624,22 +628,26 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             title: "Errore di Sincronizzazione",
             description: "Impossibile salvare i punteggi della domanda corrente.",
         });
-        return;
+        return; // Stop if score aggregation fails
       }
     }
   
+    // After scores are aggregated, decide what to do next.
     if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
       updateDocumentNonBlocking(quizDocRef, {
         state: "live",
         currentQuestionIndex: quiz.currentQuestionIndex + 1,
       });
     } else {
+      // This is the last question, end the quiz.
       try {
+        // The participant scores are now up-to-date, so we can fetch them for the leaderboard.
         const finalParticipantsSnapshot = await getDocs(participantsColRef);
         const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
         
         await updateLeaderboard(finalParticipants);
         
+        // Finally, set the quiz state to "results"
         updateDocumentNonBlocking(quizDocRef, { state: "results" });
 
       } catch (error) {
@@ -649,6 +657,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
               title: "Errore Finale",
               description: "Impossibile terminare il quiz o aggiornare la classifica.",
           });
+          // Still go to results, even if leaderboard fails
           updateDocumentNonBlocking(quizDocRef, { state: "results" });
       }
     }

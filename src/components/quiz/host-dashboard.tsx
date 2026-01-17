@@ -27,6 +27,7 @@ import {
   LogOut,
   Loader2,
   RefreshCw,
+  Save,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -114,6 +115,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [mediaGallery, setMediaGallery] = useState<StoredMedia[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
+
+  // State for the new explicit scoring flow
+  const [questionScores, setQuestionScores] = useState<Record<string, number>>({});
+  const [hasScoresSavedForCurrentQ, setHasScoresSavedForCurrentQ] = useState(false);
+  const [isSavingScores, setIsSavingScores] = useState(false);
   
   const auth = useAuth();
   const { user } = useUser();
@@ -128,13 +134,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
   // --- Start of Loop Fix ---
-  // Create refs to hold the latest state for use in callbacks without causing dependency loops.
   const quizRef = useRef(quiz);
   const participantsRef = useRef(participants);
   const currentQuestionRef = useRef(currentQuestion);
 
-  // This effect runs on every render to ensure the refs always have the latest state.
-  // It's a cheap operation and is a standard pattern for breaking useEffect dependency cycles.
   useEffect(() => {
     quizRef.current = quiz;
     participantsRef.current = participants;
@@ -142,8 +145,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   });
 
   const handleNewAnswer = useCallback(async (answer: Answer) => {
-    // Use the refs to get the latest state. This makes this callback "stable"
-    // as it no longer depends on state variables that change on every render.
     const currentQuiz = quizRef.current;
     const currentQuestion = currentQuestionRef.current;
     const currentParticipants = participantsRef.current;
@@ -165,7 +166,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
       });
     }
-  }, [isReadOnly, toast]); // Dependencies are now stable.
+  }, [isReadOnly, toast]);
   // --- End of Loop Fix ---
 
   const resetQuiz = useCallback(() => {
@@ -181,6 +182,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
     setParticipants([]);
     setAnswers([]);
+    setQuestionScores({});
+    setHasScoresSavedForCurrentQ(false);
+    setIsSavingScores(false);
     try {
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
@@ -296,7 +300,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     return () => unsubscribe();
   }, [participantsColRef]);
 
-  // A stable identifier for the questions array, changes only when question IDs change.
   const questionsIdentifier = useMemo(() => quiz?.questions.map(q => q.id).join(','), [quiz?.questions]);
 
  useEffect(() => {
@@ -305,7 +308,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         return;
     }
     
-    // We get questions from the ref to avoid adding quiz to dependencies
     const questions = quizRef.current?.questions || [];
     if (questions.length === 0) return;
 
@@ -319,10 +321,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 const otherAnswers = prevAnswers.filter(ans => ans.questionId !== q.id);
                 const updatedAnswers = [...otherAnswers, ...newAnswersForQuestion];
                 
-                newAnswersForQuestion.forEach(ans => {
-                    const isNew = !prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
-                    if (isNew) {
-                        handleNewAnswer(ans); // Call the now-stable handleNewAnswer
+                snapshot.docChanges().forEach(change => {
+                    if (change.type === 'added') {
+                        const newAnswer = change.doc.data() as Answer;
+                         handleNewAnswer(newAnswer);
                     }
                 });
 
@@ -350,21 +352,24 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
   }, []);
 
-  const updateLeaderboard = async (quizResults: Participant[]) => {
-    if (isReadOnly || !rankingsColRef) return;
+  const updateLeaderboard = async () => {
+    if (isReadOnly || !rankingsColRef || !participantsColRef) return;
     
     try {
+        const finalParticipantsSnapshot = await getDocs(participantsColRef);
+        const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
+
         const rankingsSnapshot = await getDocs(rankingsColRef);
         const currentRankings: LeaderboardEntry[] = rankingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
         const batch = writeBatch(firestore);
 
-        quizResults.forEach(participant => {
+        finalParticipants.forEach(participant => {
             const existingEntry = currentRankings.find(entry => entry.name === participant.name);
 
             if (existingEntry && existingEntry.id) {
                 const rankDocRef = doc(firestore, 'monthly_rankings', existingEntry.id);
                 batch.update(rankDocRef, {
-                    monthlyScore: existingEntry.monthlyScore + participant.score
+                    monthlyScore: (existingEntry.monthlyScore || 0) + participant.score
                 });
             } else {
                 const newRankDocRef = doc(collection(firestore, 'monthly_rankings'));
@@ -522,31 +527,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
      if (isReadOnly) return;
      setQuiz(prev => prev ? ({ ...prev, questions: prev.questions.filter((q) => q.id !== id) }) : null);
   };
-  
-  const handleScoreChange = async (participantId: string, questionId: string, value: string) => {
-    if (isReadOnly || !quizId || !currentQuestion) return;
-
-    let newScore = parseInt(value, 10);
-    if (isNaN(newScore)) {
-        newScore = 0;
-    }
-
-    const answerToUpdate = answers.find(ans => ans.participantId === participantId && ans.questionId === questionId);
-    if (answerToUpdate) {
-        const answerDocRef = doc(firestore, `quizzes/${quizId}/questions/${questionId}/answers`, answerToUpdate.participantId);
-        
-        try {
-            await updateDoc(answerDocRef, { score: newScore });
-        } catch(e) {
-            console.error("Failed to update score", e);
-            toast({
-                variant: "destructive",
-                title: "Errore di salvataggio del punteggio",
-                description: "Impossibile aggiornare il punteggio, riprovare.",
-            });
-        }
-    }
-  };
 
   const startQuiz = async () => {
     if (!quiz || isReadOnly || !user) return;
@@ -565,7 +545,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     
     try {
       await setDoc(newQuizDocRef, newQuizState);
-      // Only set quizId and inviteLink AFTER the document is confirmed to be created
       setQuizId(newQuizId);
       setInviteLink(`${window.location.origin}/join/${newQuizId}`);
     } catch (error) {
@@ -591,77 +570,95 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     updateDocumentNonBlocking(quizDocRef, { state: "question-results" });
   }
 
-  const nextQuestion = async () => {
-    if (!quiz || !quiz.questions || !quizDocRef || isReadOnly || !quizId || !participantsColRef) return;
-  
-    // Always aggregate scores for the current question before moving on.
-    if ((quiz.state === 'live' || quiz.state === 'question-results') && currentQuestion) {
-      try {
+  const saveScoresForCurrentQuestion = async () => {
+    if (!quizId || !participantsColRef || !currentQuestion || isReadOnly) return;
+    setIsSavingScores(true);
+    try {
         const batch = writeBatch(firestore);
         
-        // Fetch the most recent answers for the current question
-        const answersColRef = collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`);
-        const answersSnapshot = await getDocs(answersColRef);
-        
-        // Fetch the most recent participant data
+        // This is a direct read of the participants' state from the server
         const participantsSnapshot = await getDocs(participantsColRef);
-        const currentParticipantsState = participantsSnapshot.docs.map(doc => doc.data() as Participant);
         
-        const scoresForThisQuestion: Record<string, number> = {};
-        answersSnapshot.docs.forEach(doc => {
-            const answer = doc.data() as Answer;
-            scoresForThisQuestion[answer.participantId] = answer.score ?? 0;
-        });
-
-        // Update total scores in the batch
-        currentParticipantsState.forEach(p => {
-          const newTotalScore = p.score + (scoresForThisQuestion[p.id] ?? 0);
-          const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
-          batch.update(participantRef, { score: newTotalScore });
+        participantsSnapshot.docs.forEach(participantDoc => {
+            const participantData = participantDoc.data() as Participant;
+            const scoreForThisQuestion = questionScores[participantData.id] ?? 0;
+            
+            // Note: This replaces the previous score on the answer document.
+            // This is a simpler model where the host's input is the source of truth for the score.
+            const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, participantData.id);
+            batch.set(answerRef, { score: scoreForThisQuestion }, { merge: true });
         });
 
         await batch.commit();
-      } catch (error) {
-         console.error("Failed to commit scores for current question:", error);
-         toast({
-            variant: "destructive",
-            title: "Errore di Sincronizzazione",
-            description: "Impossibile salvare i punteggi della domanda corrente.",
+        setHasScoresSavedForCurrentQ(true);
+        toast({
+            title: "Punteggi Salvati!",
+            description: "I punteggi per questa domanda sono stati salvati.",
         });
-        return; // Stop if score aggregation fails
-      }
-    }
-  
-    // After scores are aggregated, decide what to do next.
-    if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
-      updateDocumentNonBlocking(quizDocRef, {
-        state: "live",
-        currentQuestionIndex: quiz.currentQuestionIndex + 1,
-      });
-    } else {
-      // This is the last question, end the quiz.
-      try {
-        // The participant scores are now up-to-date, so we can fetch them for the leaderboard.
-        const finalParticipantsSnapshot = await getDocs(participantsColRef);
-        const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
-        
-        await updateLeaderboard(finalParticipants);
-        
-        // Finally, set the quiz state to "results"
-        updateDocumentNonBlocking(quizDocRef, { state: "results" });
-
-      } catch (error) {
-          console.error("Leaderboard update or quiz end failed:", error);
-          toast({
-              variant: "destructive",
-              title: "Errore Finale",
-              description: "Impossibile terminare il quiz o aggiornare la classifica.",
-          });
-          // Still go to results, even if leaderboard fails
-          updateDocumentNonBlocking(quizDocRef, { state: "results" });
-      }
+    } catch (error) {
+        console.error("Failed to save scores:", error);
+        toast({
+            variant: "destructive",
+            title: "Errore nel salvataggio",
+            description: "Impossibile salvare i punteggi. Riprova.",
+        });
+    } finally {
+        setIsSavingScores(false);
     }
   };
+
+  const nextQuestion = async () => {
+    if (!quiz || !quiz.questions || !quizDocRef || isReadOnly) return;
+
+    // Transition to the next question or end the quiz
+    if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
+        // There are more questions
+        updateDocumentNonBlocking(quizDocRef, {
+            state: "live",
+            currentQuestionIndex: quiz.currentQuestionIndex + 1,
+        });
+        // Reset state for the new question
+        setQuestionScores({});
+        setHasScoresSavedForCurrentQ(false);
+    } else {
+        // This was the last question, end the quiz.
+        try {
+            // Now, aggregate all scores
+            const batch = writeBatch(firestore);
+            const participantsSnapshot = await getDocs(participantsColRef!);
+
+            for (const participantDoc of participantsSnapshot.docs) {
+                let totalScore = 0;
+                for (const q of quiz.questions) {
+                    const answerRef = doc(firestore, `quizzes/${quiz.id}/questions/${q.id}/answers`, participantDoc.id);
+                    const answerSnap = await getDoc(answerRef);
+                    if (answerSnap.exists()) {
+                        totalScore += (answerSnap.data().score || 0);
+                    }
+                }
+                batch.update(participantDoc.ref, { score: totalScore });
+            }
+            await batch.commit();
+
+            // After final scores are committed, update the leaderboard
+            await updateLeaderboard();
+            
+            // Finally, set the quiz state to "results"
+            updateDocumentNonBlocking(quizDocRef, { state: "results" });
+
+        } catch (error) {
+            console.error("Quiz finalization failed:", error);
+            toast({
+                variant: "destructive",
+                title: "Errore Finale",
+                description: "Impossibile calcolare i punteggi finali o aggiornare la classifica.",
+            });
+            // Still attempt to go to results page
+            updateDocumentNonBlocking(quizDocRef, { state: "results" });
+        }
+    }
+  };
+
 
   const restartQuiz = () => {
      if (!quizDocRef || !quiz || isReadOnly || !quizId) return;
@@ -671,12 +668,21 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
         batch.update(participantRef, { score: 0 });
       });
+      // Also reset answer scores
+      quiz.questions.forEach(q => {
+          participants.forEach(p => {
+              const answerRef = doc(firestore, `quizzes/${quizId}/questions/${q.id}/answers`, p.id);
+              batch.set(answerRef, { score: 0 }, { merge: true });
+          });
+      });
       batch.commit();
 
      updateDocumentNonBlocking(quizDocRef, {
         state: "live",
         currentQuestionIndex: 0,
      });
+     setHasScoresSavedForCurrentQ(false);
+     setQuestionScores({});
   }
 
   const copyToClipboard = () => {
@@ -1157,8 +1163,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                           <div className="flex items-center gap-1">
                             <Input 
                               type="number"
-                              defaultValue={answer.score ?? 0}
-                              onBlur={(e) => handleScoreChange(p.id, currentQuestion.id, e.target.value)}
+                              key={`${p.id}-${currentQuestion.id}`}
+                              defaultValue={questionScores[p.id] ?? answer.score ?? 0}
+                              onChange={(e) => {
+                                setHasScoresSavedForCurrentQ(false);
+                                const newScores = {...questionScores};
+                                newScores[p.id] = parseInt(e.target.value, 10) || 0;
+                                setQuestionScores(newScores);
+                              }}
                               className="w-20 h-8"
                               aria-label={`Punteggio per ${p.name}`}
                               disabled={isReadOnly}
@@ -1199,7 +1211,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                     Mostra Risposte
                   </Button>
                 )}
-                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={(quiz.state === 'live') || isReadOnly}>
+                <Button onClick={saveScoresForCurrentQuestion} disabled={isSavingScores || hasScoresSavedForCurrentQ || isReadOnly}>
+                  {isSavingScores ? <Loader2 className="mr-2 animate-spin" /> : <Save className="mr-2" />}
+                  Salva Punteggi
+                </Button>
+                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={!hasScoresSavedForCurrentQ || isReadOnly}>
                   {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina il Quiz"}
                   <ArrowRight className="ml-2"/>
                 </Button>

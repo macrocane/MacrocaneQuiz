@@ -2,6 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // --- Helper Functions ---
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -10,84 +12,90 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Helper function to determine if the user is the host of a specific quiz.
-    // It now safely checks for the quiz document's existence before accessing its data.
+    // A user is a host if a document exists for them in the /hosts collection.
+    // This is the single source of truth for host status.
+    function isHost(userId) {
+      return exists(/databases/$(database)/documents/hosts/$(userId));
+    }
+
+    // A user is the host of a specific quiz if their UID matches the hostId in the quiz document.
     function isHostOfQuiz(quizId) {
-      return isSignedIn() && 
-             exists(/databases/$(database)/documents/quizzes/$(quizId)) && 
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/quizzes/$(quizId)) &&
              get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostId == request.auth.uid;
     }
-
-    // Helper function to identify the main host by their specific email.
-    // This is a reliable way to grant special permissions.
+    
+    // Special permissions for the main host account.
     function isMainHost() {
-      return request.auth.token.email == 'host@quiz.com';
+        return request.auth.token.email == 'host@quiz.com';
     }
 
-    // Rules for the 'hosts' collection.
-    // Only the owner can read or write their own host document.
+    // --- Collection Rules ---
+
+    // Host documents can only be read or modified by the owner.
+    // Creation is handled client-side on first admin login.
     match /hosts/{hostId} {
       allow read, write: if isOwner(hostId);
-      allow list: if false; // Disallow listing all hosts.
     }
 
-    // Rules for user profiles.
+    // User profiles are private.
     match /users/{userId} {
       allow get: if isOwner(userId);
-      allow list: if false; // Disallow listing all users for privacy.
-      allow create: if isOwner(userId); // A user can create their own profile.
-      allow update, delete: if isOwner(userId); // A user can update/delete their own profile.
+      allow list: if false;
+      allow create, update, delete: if isOwner(userId);
     }
 
-    // Rules for quizzes and their subcollections.
+    // Quiz documents and their subcollections.
     match /quizzes/{quizId} {
       // Any signed-in user can read quiz data (needed for participants).
       allow read: if isSignedIn();
-      // Only the user designated as the hostId in the new quiz data can create it.
-      allow create: if isOwner(request.resource.data.hostId);
-      // Only the established host of an existing quiz can update or delete it.
+      // Only a registered host can create a quiz.
+      allow create: if isHost(request.auth.uid) && isOwner(request.resource.data.hostId);
+      // Only the designated host of this specific quiz can update or delete it.
       allow update, delete: if isHostOfQuiz(quizId);
 
-      // Rules for participants within a quiz.
+      // Rules for participants joining a quiz.
       match /participants/{participantId} {
         allow read: if isSignedIn();
-        allow create: if isOwner(participantId); // A user can join a quiz.
-        allow update: if isOwner(participantId) || isHostOfQuiz(quizId); // Participant or host can update.
-        allow delete: if isHostOfQuiz(quizId); // Only the host can remove participants.
+        // A user can join a quiz (create their participant document).
+        allow create: if isOwner(participantId);
+        // A participant can update their own data, or the host can.
+        allow update: if isOwner(participantId) || isHostOfQuiz(quizId);
+        // Only the host can remove participants.
+        allow delete: if isHostOfQuiz(quizId);
       }
 
-      // Rules for questions within a quiz.
+      // Questions can only be managed by the quiz host.
       match /questions/{questionId} {
         allow read: if isSignedIn();
-        allow write: if isHostOfQuiz(quizId); // Only the host can create/edit questions.
+        allow write: if isHostOfQuiz(quizId);
         
-        // Rules for answers to a question.
+        // Answers to a specific question.
         match /answers/{answerId} {
-          // The participant who answered or the quiz host can view a specific answer.
+          // An answer can be seen by the participant who gave it or the quiz host.
           allow get: if (resource != null && isOwner(resource.data.participantId)) || isHostOfQuiz(quizId);
           // Only the host can list all answers for a question (for grading/results).
           allow list: if isHostOfQuiz(quizId);
           // A participant can create their own answer.
           allow create: if isOwner(request.resource.data.participantId);
-          // Only the host can modify or delete an answer (e.g., for manual scoring).
+          // Only the host can modify an answer (e.g., for manual scoring).
           allow update, delete: if isHostOfQuiz(quizId);
         }
       }
     }
 
-    // Rules for the monthly rankings.
+    // Monthly rankings can be read by anyone.
+    // Writing is restricted to registered hosts.
     match /monthly_rankings/{rankingId} {
-      // Anyone can read the leaderboard.
       allow read: if true;
-      // Only the main host can write to the leaderboard (e.g., to reset it).
-      allow write: if isMainHost();
+      allow write: if isHost(request.auth.uid);
     }
 
-    // Rules for the app settings, like the rulebook.
+    // App settings, like the rulebook.
+    // Reading is allowed for any signed-in user.
+    // Writing is restricted to the main host email.
     match /settings/main {
-      // Any signed-in user can read the rules.
       allow read: if isSignedIn();
-      // Only the main host can change the rules.
       allow write: if isMainHost();
     }
   }

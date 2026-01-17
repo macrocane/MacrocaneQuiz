@@ -1,6 +1,6 @@
 'use client';
 
-import { useUser, useAuth } from '@/firebase';
+import { useUser, useAuth, useFirestore } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
 import { Loader2, Trophy, LogOut, BookText } from 'lucide-react';
@@ -8,26 +8,40 @@ import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
 import Link from 'next/link';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
+const ADMIN_ROLES = ['host@quiz.com', 'cohost1@quiz.com', 'cohost2@quiz.com'];
 
 export default function Home() {
   const { user, isUserLoading } = useUser();
   const auth = useAuth();
+  const firestore = useFirestore();
   const { isHost, isHostLoading } = useHost(user?.uid);
   const router = useRouter();
 
+  // This effect ensures a host document exists for admin users.
+  // It's the "bootstrapping" mechanism for the host role.
   useEffect(() => {
-    const logoutFlag = 'force_logout_20240726_v6'; // Chiave unica per questa operazione una tantum
-    if (typeof window !== 'undefined') {
-      if (!sessionStorage.getItem(logoutFlag)) {
-        console.log("Forzo un logout una tantum e pulisco lo stato locale per risolvere potenziali problemi di sessione.");
-        localStorage.removeItem('active-quiz-id');
-        localStorage.removeItem('quiz-draft');
-        auth.signOut();
-        sessionStorage.setItem(logoutFlag, 'true');
-      }
+    if (user && user.email && ADMIN_ROLES.includes(user.email)) {
+      const hostDocRef = doc(firestore, 'hosts', user.uid);
+      const checkAndCreateHost = async () => {
+        const docSnap = await getDoc(hostDocRef);
+        if (!docSnap.exists()) {
+          try {
+            // Create the host document. `useHost` will pick this up.
+            await setDoc(hostDocRef, {
+              username: user.email,
+              uid: user.uid,
+            });
+            console.log(`Host document created for ${user.email}`);
+          } catch (error) {
+            console.error("Error creating host document:", error);
+          }
+        }
+      };
+      checkAndCreateHost();
     }
-  }, [auth]);
+  }, [user, firestore]);
 
   if (isUserLoading || isHostLoading) {
     return (
@@ -50,6 +64,7 @@ export default function Home() {
    );
   }
 
+  // If the user is logged in, but not a host, show the participant view.
   if (!isHost) {
      return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center">
@@ -75,6 +90,7 @@ export default function Home() {
     );
   }
   
+  // A user is a host. Determine if they are a read-only co-host.
   const isReadOnly = user.email !== 'host@quiz.com';
 
   return (

@@ -7,28 +7,26 @@ import { useEffect, use } from 'react';
 import { Loader2, LogOut, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useHost } from '@/hooks/use-host';
 
-
-const ADMIN_ROLES = ['host@quiz.com', 'cohost1@quiz.com', 'cohost2@quiz.com'];
 
 export default function JoinQuizPage({ params }: { params: { quizId: string } }) {
   const { quizId } = use(params);
   const { user, isUserLoading } = useUser();
+  const { isHost, isHostLoading } = useHost(user?.uid);
   const auth = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    // Se l'utente non è loggato e il caricamento è terminato, reindirizza
+    // If not loading and not logged in, redirect to login
     if (!isUserLoading && !user) {
       localStorage.setItem('redirectAfterLogin', `/join/${quizId}`);
       router.push('/login');
     }
   }, [user, isUserLoading, router, quizId]);
 
-  const isHost = user?.email && ADMIN_ROLES.includes(user.email);
-
-  // Mostra il loader mentre si determina lo stato dell'utente
-  if (isUserLoading) {
+  // Show a loader while user and host status are being determined
+  if (isUserLoading || isHostLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -37,20 +35,20 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
 
-  // Se l'utente è un host, mostra una schermata dedicata per evitare il loop
+  // If the user is a host, show a dedicated screen to prevent them from joining as a participant
   if (user && isHost) {
      return (
        <div className="flex h-screen w-full items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md text-center">
             <CardHeader>
-                <CardTitle>Sei l'Host!</CardTitle>
+                <CardTitle>Sei un Host!</CardTitle>
                 <CardDescription>
                     Hai aperto un link di invito mentre eri connesso come host.
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                    Per testare come partecipante, devi prima disconnetterti.
+                    Per partecipare al quiz, devi prima disconnetterti e accedere come partecipante.
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                     <Button variant="outline" className="w-full" onClick={() => auth.signOut()}>
@@ -66,7 +64,7 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
   
-  // Se l'utente non è loggato, mostra comunque il loader durante il reindirizzamento
+  // If the user is not logged in, they are being redirected, so show a loader.
   if (!user) {
      return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -76,7 +74,7 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
 
-  // Solo se l'utente è un partecipante valido, mostra la vista partecipante
+  // Only if the user is a valid participant (logged in and not a host), show the participant view.
   return (
     <main>
       <ParticipantView quizId={quizId} />

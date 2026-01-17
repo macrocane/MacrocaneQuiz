@@ -136,7 +136,7 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isSignedIn();
       allow create: if isOwner(request.resource.data.hostId);
-      allow update: if resource != null && isOwner(resource.data.hostId) && request.resource.data.hostId == resource.data.id;
+      allow update: if resource != null && isOwner(resource.data.hostId);
       allow delete: if resource != null && isOwner(resource.data.hostId);
 
       /**

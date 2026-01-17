@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -106,6 +106,9 @@ interface HostDashboardProps {
 }
 
 export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
+  const renderCount = useRef(0);
+  console.log(`-- HostDashboard Render #${++renderCount.current} --`);
+
   const [quizId, setQuizId] = useState<string | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [inviteLink, setInviteLink] = useState("");
@@ -151,17 +154,20 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
 
   useEffect(() => {
+    console.log("DEBUG_A: Initial mount useEffect running.");
     if (typeof window === 'undefined') return;
 
     try {
       const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
       if (activeQuizId) {
+        console.log("DEBUG_B: Found active quiz ID in localStorage:", activeQuizId);
         setQuizId(activeQuizId);
         return;
       }
 
       const draftJson = localStorage.getItem(QUIZ_DRAFT_KEY);
       if (draftJson) {
+        console.log("DEBUG_C: Found draft quiz in localStorage.");
         const draftQuiz = JSON.parse(draftJson) as Quiz;
         if (draftQuiz && draftQuiz.state === 'creating') {
           setQuiz(draftQuiz);
@@ -176,6 +182,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
     
     if (!quiz) {
+        console.log("DEBUG_D: No active quiz or draft found, initializing new quiz object.");
         setQuiz({
             id: '',
             name: "Il Mio Quiz Fantastico",
@@ -189,20 +196,25 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   useEffect(() => {
     if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
+        console.log("DEBUG_E: Updating hostId on quiz draft.");
         setQuiz(prev => prev ? { ...prev, hostId: user.uid } : null);
     }
   }, [user, quiz]);
 
   useEffect(() => {
+    console.log("DEBUG_F: useEffect for saving to localStorage running.");
     if (typeof window === 'undefined') return;
     try {
       if (quizId && quiz?.state !== 'creating') {
+        console.log("DEBUG_G: Saving active quiz ID to localStorage:", quizId);
         localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
         localStorage.removeItem(QUIZ_DRAFT_KEY);
       } else if (quiz?.state === 'creating') {
         if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
+          console.log("DEBUG_H: Saving quiz draft to localStorage.");
           localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
         } else {
+          console.log("DEBUG_I: Removing empty quiz draft from localStorage.");
           localStorage.removeItem(QUIZ_DRAFT_KEY);
         }
       }
@@ -215,10 +227,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (!quizDocRef) {
       return;
     }
+    console.log("DEBUG_J: Subscribing to quiz document:", quizDocRef.path);
 
     const unsubscribe = onSnapshot(quizDocRef, (doc) => {
       if (doc.exists()) {
         const quizData = doc.data() as Quiz;
+        console.log("DEBUG_K: Received quiz document snapshot.", quizData.state);
         setQuiz(quizData);
       } else {
         toast({
@@ -249,7 +263,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       setParticipants([]);
       return;
     }
+    console.log("DEBUG_L: Subscribing to participants collection:", participantsColRef.path);
     const unsubscribe = onSnapshot(participantsColRef, (snapshot) => {
+      console.log("DEBUG_M: Received participants snapshot.", snapshot.size, "docs");
       setParticipants(snapshot.docs.map(doc => doc.data() as Participant));
     }, (err: FirestoreError) => {
       console.error("Error listening to participants collection:", err);
@@ -294,7 +310,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         setAnswers([]);
         return;
     }
-
+    console.log("DEBUG_N: Subscribing to answers for all questions.");
     const answersColRef = collection(firestore, `quizzes/${quizId}/questions`);
     const unsubscribers = quiz.questions.map(q => {
         const questionAnswersColRef = collection(answersColRef, `${q.id}/answers`);
@@ -741,29 +757,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Domanda</FormLabel>
                                     <Select 
-                                        onValueChange={(newType) => {
-                                            field.onChange(newType);
-                                            const isMediaType = ['image', 'video', 'audio'].includes(newType);
-
-                                            if (isMediaType) {
-                                                form.setValue('answerType', 'multiple-choice');
-                                                form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-                                                form.setValue('correctAnswer', '0');
-                                            } else {
-                                                form.setValue('answerType', undefined);
-                                                form.setValue('mediaUrl', '');
-                                                
-                                                if (newType === 'multiple-choice') {
-                                                    form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-                                                    form.setValue('correctAnswer', '0');
-                                                } else if (newType === 'open-ended') {
-                                                    form.setValue('options', []);
-                                                    form.setValue('correctAnswer', '');
-                                                } else if (newType === 'reorder') {
-                                                    form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-                                                    form.setValue('correctAnswer', undefined);
-                                                }
-                                            }
+                                        onValueChange={(value) => {
+                                          console.log('DEBUG_01: Question type changing to', value);
+                                          field.onChange(value);
                                         }}
                                         value={field.value}
                                         disabled={isReadOnly}
@@ -794,16 +790,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormItem>
                                     <FormLabel>Tipo di Risposta</FormLabel>
                                     <Select 
-                                        onValueChange={(newAnswerType) => {
-                                            field.onChange(newAnswerType);
-                                            
-                                            if (newAnswerType === 'multiple-choice') {
-                                                form.setValue('options', [{ value: '' }, { value: '' }, { value: '' }, { value: '' }]);
-                                                form.setValue('correctAnswer', '0');
-                                            } else if (newAnswerType === 'open-ended') {
-                                                form.setValue('options', []);
-                                                form.setValue('correctAnswer', '');
-                                            }
+                                        onValueChange={(value) => {
+                                          console.log('DEBUG_05: Answer type changing to', value);
+                                          field.onChange(value);
                                         }}
                                         value={field.value}
                                         disabled={isReadOnly}

@@ -106,9 +106,6 @@ interface HostDashboardProps {
 }
 
 export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
-  const renderCount = useRef(0);
-  console.log(`-- HostDashboard Render #${++renderCount.current} --`);
-
   const [quizId, setQuizId] = useState<string | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [inviteLink, setInviteLink] = useState("");
@@ -118,7 +115,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
   
-
   const auth = useAuth();
   const { user } = useUser();
   const firestore = useFirestore();
@@ -130,6 +126,47 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
+
+  // --- Start of Loop Fix ---
+  // Create refs to hold the latest state for use in callbacks without causing dependency loops.
+  const quizRef = useRef(quiz);
+  const participantsRef = useRef(participants);
+  const currentQuestionRef = useRef(currentQuestion);
+
+  // This effect runs on every render to ensure the refs always have the latest state.
+  // It's a cheap operation and is a standard pattern for breaking useEffect dependency cycles.
+  useEffect(() => {
+    quizRef.current = quiz;
+    participantsRef.current = participants;
+    currentQuestionRef.current = currentQuestion;
+  });
+
+  const handleNewAnswer = useCallback(async (answer: Answer) => {
+    // Use the refs to get the latest state. This makes this callback "stable"
+    // as it no longer depends on state variables that change on every render.
+    const currentQuiz = quizRef.current;
+    const currentQuestion = currentQuestionRef.current;
+    const currentParticipants = participantsRef.current;
+
+    if (!currentQuiz || !currentQuestion || isReadOnly) return;
+
+    const { isCheating, reason } = await detectCheating({
+      responseTime: answer.responseTime,
+      answerText: answer.answerText,
+      questionText: currentQuestion.text,
+    });
+    
+    const participant = currentParticipants.find(p => p.id === answer.participantId);
+
+    if (isCheating && participant) {
+      toast({
+        variant: "destructive",
+        title: "Potenziale Tentativo di Barare Rilevato!",
+        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
+      });
+    }
+  }, [isReadOnly, toast]); // Dependencies are now stable.
+  // --- End of Loop Fix ---
 
   const resetQuiz = useCallback(() => {
     if (isReadOnly || !user) return;
@@ -154,20 +191,17 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
 
   useEffect(() => {
-    console.log("DEBUG_A: Initial mount useEffect running.");
     if (typeof window === 'undefined') return;
 
     try {
       const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
       if (activeQuizId) {
-        console.log("DEBUG_B: Found active quiz ID in localStorage:", activeQuizId);
         setQuizId(activeQuizId);
         return;
       }
 
       const draftJson = localStorage.getItem(QUIZ_DRAFT_KEY);
       if (draftJson) {
-        console.log("DEBUG_C: Found draft quiz in localStorage.");
         const draftQuiz = JSON.parse(draftJson) as Quiz;
         if (draftQuiz && draftQuiz.state === 'creating') {
           setQuiz(draftQuiz);
@@ -182,7 +216,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
     
     if (!quiz) {
-        console.log("DEBUG_D: No active quiz or draft found, initializing new quiz object.");
         setQuiz({
             id: '',
             name: "Il Mio Quiz Fantastico",
@@ -192,29 +225,25 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             currentQuestionIndex: 0,
         });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (user && quiz?.state === 'creating' && quiz.hostId !== user.uid) {
-        console.log("DEBUG_E: Updating hostId on quiz draft.");
         setQuiz(prev => prev ? { ...prev, hostId: user.uid } : null);
     }
   }, [user, quiz]);
 
   useEffect(() => {
-    console.log("DEBUG_F: useEffect for saving to localStorage running.");
     if (typeof window === 'undefined') return;
     try {
       if (quizId && quiz?.state !== 'creating') {
-        console.log("DEBUG_G: Saving active quiz ID to localStorage:", quizId);
         localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
         localStorage.removeItem(QUIZ_DRAFT_KEY);
       } else if (quiz?.state === 'creating') {
         if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
-          console.log("DEBUG_H: Saving quiz draft to localStorage.");
           localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
         } else {
-          console.log("DEBUG_I: Removing empty quiz draft from localStorage.");
           localStorage.removeItem(QUIZ_DRAFT_KEY);
         }
       }
@@ -227,12 +256,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (!quizDocRef) {
       return;
     }
-    console.log("DEBUG_J: Subscribing to quiz document:", quizDocRef.path);
 
     const unsubscribe = onSnapshot(quizDocRef, (doc) => {
       if (doc.exists()) {
         const quizData = doc.data() as Quiz;
-        console.log("DEBUG_K: Received quiz document snapshot.", quizData.state);
         setQuiz(quizData);
       } else {
         toast({
@@ -255,7 +282,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribe();
-  }, [quizDocRef, resetQuiz, toast]);
+  }, [quizDocRef]); // Removed resetQuiz and toast from deps to fix loop
 
 
   useEffect(() => {
@@ -263,9 +290,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       setParticipants([]);
       return;
     }
-    console.log("DEBUG_L: Subscribing to participants collection:", participantsColRef.path);
     const unsubscribe = onSnapshot(participantsColRef, (snapshot) => {
-      console.log("DEBUG_M: Received participants snapshot.", snapshot.size, "docs");
       setParticipants(snapshot.docs.map(doc => doc.data() as Participant));
     }, (err: FirestoreError) => {
       console.error("Error listening to participants collection:", err);
@@ -280,39 +305,21 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     return () => unsubscribe();
   }, [participantsColRef]);
 
-  const handleNewAnswer = useCallback(async (answer: Answer) => {
-    if (!quiz || !currentQuestion || isReadOnly) return;
-
-    if (answers.some(a => a.participantId === answer.participantId && a.questionId === currentQuestion.id)) {
-      return;
-    }
-
-    const { isCheating, reason } = await detectCheating({
-      responseTime: answer.responseTime,
-      answerText: answer.answerText,
-      questionText: currentQuestion.text,
-    });
-    
-    const participant = participants.find(p => p.id === answer.participantId);
-
-    if (isCheating && participant) {
-      toast({
-        variant: "destructive",
-        title: "Potenziale Tentativo di Barare Rilevato!",
-        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
-      });
-    }
-  }, [quiz, currentQuestion, isReadOnly, answers, participants, toast]);
-
+  // A stable identifier for the questions array, changes only when question IDs change.
+  const questionsIdentifier = useMemo(() => quiz?.questions.map(q => q.id).join(','), [quiz?.questions]);
 
  useEffect(() => {
-    if (!quizId || !quiz?.questions.length) {
+    if (!quizId || !questionsIdentifier) {
         setAnswers([]);
         return;
     }
-    console.log("DEBUG_N: Subscribing to answers for all questions.");
+    
+    // We get questions from the ref to avoid adding quiz to dependencies
+    const questions = quizRef.current?.questions || [];
+    if (questions.length === 0) return;
+
     const answersColRef = collection(firestore, `quizzes/${quizId}/questions`);
-    const unsubscribers = quiz.questions.map(q => {
+    const unsubscribers = questions.map(q => {
         const questionAnswersColRef = collection(answersColRef, `${q.id}/answers`);
         return onSnapshot(questionAnswersColRef, (snapshot) => {
             const newAnswersForQuestion = snapshot.docs.map(doc => doc.data() as Answer);
@@ -320,10 +327,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
              setAnswers(prevAnswers => {
                 const otherAnswers = prevAnswers.filter(ans => ans.questionId !== q.id);
                 const updatedAnswers = [...otherAnswers, ...newAnswersForQuestion];
+                
                 newAnswersForQuestion.forEach(ans => {
-                    const alreadyProcessed = prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
-                    if (!alreadyProcessed) {
-                        handleNewAnswer(ans);
+                    const isNew = !prevAnswers.some(a => a.participantId === ans.participantId && a.questionId === ans.questionId);
+                    if (isNew) {
+                        handleNewAnswer(ans); // Call the now-stable handleNewAnswer
                     }
                 });
 
@@ -341,7 +349,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
 
     return () => unsubscribers.forEach(unsub => unsub());
-}, [quizId, quiz?.questions, firestore, handleNewAnswer]);
+}, [quizId, questionsIdentifier, firestore, handleNewAnswer]);
 
 
 
@@ -357,7 +365,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   }, []);
 
   const updateLeaderboard = async (quizResults: Participant[]) => {
-    if (isReadOnly) return;
+    if (isReadOnly || !rankingsColRef) return;
     
     try {
         const rankingsSnapshot = await getDocs(rankingsColRef);
@@ -395,7 +403,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   };
 
   const resetLeaderboard = async () => {
-    if (isReadOnly) return;
+    if (isReadOnly || !rankingsColRef) return;
     
     const rankingsSnapshot = await getDocs(rankingsColRef);
     if (rankingsSnapshot.empty) return;
@@ -758,8 +766,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormLabel>Tipo di Domanda</FormLabel>
                                     <Select 
                                         onValueChange={(value) => {
-                                          console.log('DEBUG_01: Question type changing to', value);
-                                          field.onChange(value);
+                                            field.onChange(value);
+                                            // Logic moved here for stability
+                                            if (value === 'multiple-choice' || value === 'reorder') {
+                                                form.setValue('answerType', undefined);
+                                            } else if (value === 'open-ended') {
+                                                form.setValue('answerType', undefined);
+                                                form.setValue('options', []);
+                                            } else {
+                                                form.setValue('answerType', 'multiple-choice');
+                                            }
                                         }}
                                         value={field.value}
                                         disabled={isReadOnly}
@@ -791,8 +807,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     <FormLabel>Tipo di Risposta</FormLabel>
                                     <Select 
                                         onValueChange={(value) => {
-                                          console.log('DEBUG_05: Answer type changing to', value);
-                                          field.onChange(value);
+                                            field.onChange(value);
+                                            // Logic moved here for stability
+                                            if (value === 'open-ended') {
+                                                form.setValue('options', []);
+                                            }
                                         }}
                                         value={field.value}
                                         disabled={isReadOnly}
@@ -1296,7 +1315,3 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     </SidebarProvider>
   );
 }
-
-    
-
-    

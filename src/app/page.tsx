@@ -31,7 +31,7 @@ export default function Home() {
             // Create the host document. `useHost` will pick this up.
             await setDoc(hostDocRef, {
               username: user.email,
-              uid: user.uid,
+              id: user.uid,
             });
             console.log(`Host document created for ${user.email}`);
           } catch (error) {
@@ -90,12 +90,11 @@ export default function Home() {
     );
   }
   
-  // A user is a host. Determine if they are a read-only co-host.
-  const isReadOnly = user.email !== 'host@quiz.com';
-
+  // If the user is a host, they have full permissions.
+  // The isReadOnly concept is simplified: you are either a host or not.
   return (
     <main>
-      <HostDashboard isReadOnly={isReadOnly} />
+      <HostDashboard isReadOnly={false} />
     </main>
   );
 }

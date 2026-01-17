@@ -34,7 +34,7 @@ export default function RulesPage() {
   }, [settings]);
 
   const handleSave = async () => {
-    if (isReadOnly) return;
+    if (!isHost) return;
     setIsSaving(true);
     try {
       await setDoc(settingsDocRef, { rules }, { merge: true });
@@ -55,8 +55,7 @@ export default function RulesPage() {
   };
 
   const isLoading = isUserLoading || isHostLoading || isSettingsLoading;
-  const isMainHost = user?.email === 'host@quiz.com';
-  const isReadOnly = !isHost || !isMainHost;
+  const isReadOnly = !isHost;
 
   if (isLoading) {
     return (
@@ -90,15 +89,6 @@ export default function RulesPage() {
               {rules || 'Il regolamento non è stato ancora scritto.'}
             </div>
           ) : (
-            <>
-              {!isMainHost && isHost && (
-                 <Alert variant="default" className="bg-yellow-50 border-yellow-200 text-yellow-800">
-                    <AlertTitle>Modalità Sola Lettura</AlertTitle>
-                    <AlertDescription>
-                        Solo l'host principale (`host@quiz.com`) può modificare il regolamento.
-                    </AlertDescription>
-                </Alert>
-              )}
               <Textarea
                 value={rules}
                 onChange={(e) => setRules(e.target.value)}
@@ -106,7 +96,6 @@ export default function RulesPage() {
                 rows={15}
                 disabled={isReadOnly || isSaving}
               />
-            </>
           )}
         </CardContent>
         <CardFooter className="flex flex-col sm:flex-row justify-between gap-2">

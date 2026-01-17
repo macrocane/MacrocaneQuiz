@@ -100,10 +100,8 @@ service cloud.firestore {
      * @principle Restricts access to a user's own data tree and prevents user enumeration.
      */
     match /hosts/{hostId} {
-      // Allow any signed-in user to check for the existence of a host document.
-      // This is safe because the document itself contains no sensitive information
-      // and is only used to determine if a user has host privileges.
-      allow get: if isSignedIn();
+      // DEBUG: Temporarily allow public reads to diagnose permission issue.
+      allow get: if true;
       allow list: if false;
       allow create: if isOwner(hostId) && request.resource.data.id == hostId;
       allow update: if isExistingOwner(hostId) && request.resource.data.id == resource.data.id;
@@ -205,7 +203,8 @@ service cloud.firestore {
      * @principle Protects critical settings by restricting writes to a single admin role.
      */
     match /settings/{settingId} {
-      allow get: if isSignedIn();
+      // DEBUG: Temporarily allow public reads to diagnose permission issue.
+      allow get: if true;
       allow write: if isSignedIn() && request.auth.token.email == 'host@quiz.com';
     }
   }

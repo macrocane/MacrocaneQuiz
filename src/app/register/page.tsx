@@ -22,7 +22,7 @@ import { PlaceHolderImages } from '@/lib/placeholder-images';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { UserProfile } from '@/lib/types';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { GoogleIcon } from '@/components/icons/google-icon';
 
 const avatarChoices = PlaceHolderImages.filter(img => img.id.startsWith('avatar'));
@@ -30,6 +30,7 @@ const avatarChoices = PlaceHolderImages.filter(img => img.id.startsWith('avatar'
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [nickname, setNickname] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState<string>(avatarChoices[0].imageUrl);
   const [error, setError] = useState('');
@@ -175,13 +176,25 @@ export default function RegisterPage() {
             </div>
             <div className="grid gap-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                />
+                <div className="relative">
+                    <Input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute inset-y-0 right-0 flex items-center px-3"
+                        onClick={() => setShowPassword(!showPassword)}
+                    >
+                        {showPassword ? <EyeOff className="h-5 w-5"/> : <Eye className="h-5 w-5"/>}
+                        <span className="sr-only">{showPassword ? 'Nascondi password' : 'Mostra password'}</span>
+                    </Button>
+                </div>
             </div>
 
             <div className="space-y-2">

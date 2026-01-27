@@ -9,8 +9,8 @@ import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { ADMIN_ROLES } from '@/lib/roles';
 
-const ADMIN_ROLES = ['host@quiz.com', 'cohost1@quiz.com', 'cohost2@quiz.com'];
 
 export default function Home() {
   const { user, isUserLoading } = useUser();

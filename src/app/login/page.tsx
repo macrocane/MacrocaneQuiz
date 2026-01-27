@@ -20,6 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Link from 'next/link';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { GoogleIcon } from '@/components/icons/google-icon';
+import { ADMIN_ROLES } from '@/lib/roles';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -58,6 +59,12 @@ export default function LoginPage() {
     try {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
+
+      // If the user's email is in the admin roles, they are an admin. Redirect to home.
+      if (user.email && ADMIN_ROLES.includes(user.email)) {
+        router.push('/');
+        return;
+      }
 
       const userDocRef = doc(firestore, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);

@@ -109,7 +109,7 @@ export default function RegisterPage() {
    const getFriendlyAuthErrorMessage = (errorCode: string) => {
     switch (errorCode) {
       case 'auth/email-already-in-use':
-        return 'Questo indirizzo email è già stato registrato.';
+        return 'Questo indirizzo email è già registrato. Prova ad accedere.';
       case 'auth/weak-password':
         return 'La password è troppo debole. Deve contenere almeno 6 caratteri.';
       case 'auth/invalid-email':

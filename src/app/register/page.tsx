@@ -24,7 +24,6 @@ import { cn } from '@/lib/utils';
 import { UserProfile } from '@/lib/types';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { GoogleIcon } from '@/components/icons/google-icon';
-import { ADMIN_ROLES } from '@/lib/roles';
 
 const avatarChoices = PlaceHolderImages.filter(img => img.id.startsWith('avatar'));
 
@@ -55,15 +54,7 @@ export default function RegisterPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Check if the user is an admin.
-      if (user.email && ADMIN_ROLES.includes(user.email)) {
-        // If they are an admin, no need to create a participant profile.
-        // The logic on the main page will handle creating the host document.
-        router.push('/');
-        return; 
-      }
-
-      // 3. If not an admin, create user profile in Firestore
+      // 2. Create user profile in Firestore
       const userProfile: UserProfile = {
         id: user.uid,
         email: user.email!,
@@ -74,7 +65,7 @@ export default function RegisterPage() {
       const userDocRef = doc(firestore, 'users', user.uid);
       await setDoc(userDocRef, userProfile);
 
-      // 4. Redirect to login or directly to the app
+      // 3. Redirect to login or directly to the app
       const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
       localStorage.removeItem('redirectAfterLogin');
       router.push(redirectPath);
@@ -93,12 +84,6 @@ export default function RegisterPage() {
     try {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
-
-      // If the user's email is in the admin roles, they are an admin. Redirect to home.
-      if (user.email && ADMIN_ROLES.includes(user.email)) {
-        router.push('/');
-        return;
-      }
 
       const userDocRef = doc(firestore, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);

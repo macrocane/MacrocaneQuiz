@@ -9,8 +9,6 @@ import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { ADMIN_ROLES } from '@/lib/roles';
-
 
 export default function Home() {
   const { user, isUserLoading } = useUser();
@@ -18,30 +16,6 @@ export default function Home() {
   const firestore = useFirestore();
   const { isHost, isHostLoading } = useHost(user?.uid);
   const router = useRouter();
-
-  // This effect ensures a host document exists for admin users.
-  // It's the "bootstrapping" mechanism for the host role.
-  useEffect(() => {
-    if (user && user.email && ADMIN_ROLES.includes(user.email)) {
-      const hostDocRef = doc(firestore, 'hosts', user.uid);
-      const checkAndCreateHost = async () => {
-        const docSnap = await getDoc(hostDocRef);
-        if (!docSnap.exists()) {
-          try {
-            // Create the host document. `useHost` will pick this up.
-            await setDoc(hostDocRef, {
-              username: user.email,
-              id: user.uid,
-            });
-            console.log(`Host document created for ${user.email}`);
-          } catch (error) {
-            console.error("Error creating host document:", error);
-          }
-        }
-      };
-      checkAndCreateHost();
-    }
-  }, [user, firestore]);
 
   if (isUserLoading || isHostLoading) {
     return (

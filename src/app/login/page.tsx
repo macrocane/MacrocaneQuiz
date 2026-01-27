@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useAuth, useFirestore } from '@/firebase';
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const auth = useAuth();
   const firestore = useFirestore();
@@ -34,6 +35,7 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setIsLoading(true);
 
     try {
@@ -51,9 +53,30 @@ export default function LoginPage() {
     }
   };
 
+  const handlePasswordReset = async () => {
+    if (!email) {
+      setError('Per favore, inserisci la tua email per reimpostare la password.');
+      setSuccess('');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setSuccess('Email di reimpostazione inviata! Controlla la tua casella di posta (anche lo spam).');
+    } catch (error: any) {
+      setError('Impossibile inviare l\'email di reimpostazione. L\'indirizzo email è corretto?');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setError('');
+    setSuccess('');
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
@@ -124,8 +147,14 @@ export default function LoginPage() {
             <CardContent className="grid gap-4">
             {error && (
                 <Alert variant="destructive">
-                <AlertTitle>Errore di Accesso</AlertTitle>
+                <AlertTitle>Errore</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
+                </Alert>
+            )}
+            {success && (
+                <Alert>
+                <AlertTitle>Email Inviata</AlertTitle>
+                <AlertDescription>{success}</AlertDescription>
                 </Alert>
             )}
             <div className="grid gap-2">
@@ -140,7 +169,17 @@ export default function LoginPage() {
                 />
             </div>
             <div className="grid gap-2">
-                <Label htmlFor="password">Password</Label>
+                 <div className="flex items-center">
+                    <Label htmlFor="password">Password</Label>
+                    <button
+                        type="button"
+                        onClick={handlePasswordReset}
+                        className="ml-auto inline-block text-sm underline disabled:opacity-50"
+                        disabled={isLoading}
+                    >
+                        Password dimenticata?
+                    </button>
+                </div>
                 <div className="relative">
                     <Input
                         id="password"

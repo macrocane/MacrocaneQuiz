@@ -1,5 +1,3 @@
-
-
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -12,12 +10,14 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
 import type { Quiz, Participant, Answer, UserProfile } from '@/lib/types';
-import { useUser, useFirestore, useMemoFirebase, FirestorePermissionError, errorEmitter, useDoc } from '@/firebase';
+import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 
 type ParticipantStatus = 'loading' | 'joining' | 'waiting' | 'question' | 'answered' | 'question-results' | 'results';
+
+const STANDARD_SCORE = 10;
 
 export default function ParticipantView({ quizId }: { quizId: string }) {
   const [status, setStatus] = useState<ParticipantStatus>('loading');
@@ -126,33 +126,44 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     }, (err: FirestoreError) => {
         console.error("Firestore snapshot error on participant view:", err);
         setError("Si è verificato un errore nel caricamento del quiz.");
-        if (quizDocRef) {
-          const contextualError = new FirestorePermissionError({
-              operation: 'get',
-              path: quizDocRef.path,
-          });
-          errorEmitter.emit('permission-error', contextualError);
-        }
     });
 
     return () => unsubscribe();
-  }, [quizDocRef, myParticipantData]); // Dependency on myParticipantData ensures we react correctly once joined.
+  }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state]);
   
   const handleSubmit = () => {
     if (!startTime || !quiz || !myParticipantData || !firestore || !quiz.questions) return;
 
     const currentQuestion = quiz.questions[quiz.currentQuestionIndex];
     if (!currentQuestion) return;
+    
+    const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
+    
+    // --- Automatic Scoring Logic ---
+    let calculatedScore = 0;
+    if (needsMultipleChoice) {
+      if (answer === currentQuestion.correctAnswer) {
+        calculatedScore = STANDARD_SCORE;
+      }
+    } else if (currentQuestion.type === 'reorder') {
+        const isCorrect = JSON.stringify(reorderAnswers) === JSON.stringify(currentQuestion.correctOrder);
+        if (isCorrect) {
+            calculatedScore = STANDARD_SCORE;
+        }
+    }
+    // Open-ended questions will have a score of 0, for the host to update manually.
+    // --- End of Automatic Scoring Logic ---
 
     const responseTime = (Date.now() - startTime) / 1000;
     
     const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, myParticipantData.id);
 
-    const answerPayload: Omit<Answer, 'isCheating' | 'cheatingReason' | 'score'> = {
+    const answerPayload: Omit<Answer, 'isCheating' | 'cheatingReason'> = {
         participantId: myParticipantData.id,
         questionId: currentQuestion.id,
-        responseTime: parseFloat(responseTime.toFixed(2)),
+        responseTime: parseFloat(responseTime.toFixed(3)),
         answerText: currentQuestion.type === 'reorder' ? `Ordine: ${reorderAnswers.join(', ')}` : answer,
+        score: calculatedScore,
         ...(currentQuestion.type === 'reorder' && { answerOrder: reorderAnswers }),
     };
 
@@ -246,7 +257,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                                             <p className="text-sm text-muted-foreground">{pAnswer ? (pAnswer.answerOrder ? pAnswer.answerOrder.join(', ') : pAnswer.answerText) : 'Nessuna risposta'}</p>
                                         </div>
                                     </div>
-                                    {pAnswer && <span className="text-sm font-mono">{pAnswer.responseTime.toFixed(1)}s</span>}
+                                    {pAnswer && <span className="text-sm font-mono">{pAnswer.responseTime.toFixed(3)}s</span>}
                                 </div>
                             )
                         })}

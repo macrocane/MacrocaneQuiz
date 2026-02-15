@@ -1158,7 +1158,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                             </Tooltip>
                            </TooltipProvider>
                         )}
-                        <span className="text-sm font-mono">{answer.responseTime.toFixed(1)}s</span>
+                        <span className="text-sm font-mono">{answer.responseTime.toFixed(3)}s</span>
                          
                           <div className="flex items-center gap-1">
                             <Input 

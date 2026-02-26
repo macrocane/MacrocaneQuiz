@@ -35,11 +35,12 @@ export type Answer = {
 };
 
 export type LeaderboardEntry = {
-  id?: string; // document id from firestore
+  id?: string; // document id from firestore (user UID)
   rank?: number; // rank is calculated client-side
   name: string;
   monthlyScore: number;
   avatar: string;
+  quizzesPlayed?: number; // Number of quizzes this user participated in this month
 };
 
 export type Quiz = {
@@ -70,4 +71,5 @@ export type UserProfile = {
 export type AppSettings = {
   rules: string;
   jollyEnabled?: boolean;
+  totalQuizzesHeld?: number; // Total number of quizzes held this month
 };

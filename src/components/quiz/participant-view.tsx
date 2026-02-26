@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { doc, onSnapshot, FirestoreError, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, GripVertical, ArrowUp, ArrowDown, Zap } from 'lucide-react';
-import type { Quiz, Participant, Answer, UserProfile, AppSettings } from '@/lib/types';
+import type { Quiz, Participant, Answer, UserProfile, AppSettings, LeaderboardEntry } from '@/lib/types';
 import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
@@ -36,10 +36,22 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
   const { data: settings } = useDoc<AppSettings>(settingsDocRef);
 
+  // Fetch the user's monthly ranking to check attendance
+  const userRankingDocRef = useMemoFirebase(() => (firestore && user) ? doc(firestore, 'monthly_rankings', user.uid) : null, [firestore, user]);
+  const { data: userRanking } = useDoc<LeaderboardEntry>(userRankingDocRef);
+
   const quizDocRef = useMemoFirebase(() => firestore && quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   
   const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
   const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
+
+  // A user is eligible for Jolly if they have missed at least one quiz this month
+  const isEligibleForJolly = useMemo(() => {
+    if (!settings) return false;
+    const totalHeld = settings.totalQuizzesHeld || 0;
+    const userPlayed = userRanking?.quizzesPlayed || 0;
+    return userPlayed < totalHeld;
+  }, [settings, userRanking]);
 
   useEffect(() => {
     if (user && quiz?.state === 'lobby' && !myParticipantData && !isParticipantLoading) {
@@ -133,7 +145,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state]);
   
   const handleActivateJolly = async () => {
-    if (!user || !participantDocRef || !firestore || !myParticipantData?.jollyAvailable) return;
+    if (!user || !participantDocRef || !firestore || !myParticipantData?.jollyAvailable || !isEligibleForJolly) return;
     setIsActivatingJolly(true);
     try {
         const batch = writeBatch(firestore);
@@ -298,7 +310,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                         {myParticipantData.jollyActive && <Zap className="h-4 w-4 text-yellow-500 fill-yellow-500" />}
                     </div>
                     
-                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && (
+                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && isEligibleForJolly && (
                         <AlertDialog>
                             <AlertDialogTrigger asChild>
                                 <Button variant="secondary" className="gap-2" disabled={isActivatingJolly}>
@@ -309,7 +321,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                                 <AlertDialogHeader>
                                     <AlertDialogTitle>Sei sicuro di voler giocare il Jolly?</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                        Il Jolly raddoppierà il tuo punteggio finale per questo quiz. Ne hai solo uno a disposizione per tutto il mese! Una volta attivato, non potrai tornare indietro.
+                                        Il Jolly raddoppierà il tuo punteggio finale per questo quiz. È disponibile solo per i partecipanti che soddisfano i criteri di idoneità per questa sessione. Ne hai solo uno a disposizione per l'intero mese!
                                     </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -318,6 +330,12 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                                 </AlertDialogFooter>
                             </AlertDialogContent>
                         </AlertDialog>
+                    )}
+
+                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && !isEligibleForJolly && (
+                        <div className="text-xs text-muted-foreground mt-2 max-w-xs italic">
+                            Il Jolly è disponibile solo per i partecipanti idonei in base allo storico di partecipazione del mese.
+                        </div>
                     )}
                     
                     {myParticipantData.jollyActive && quiz?.state === 'lobby' && (

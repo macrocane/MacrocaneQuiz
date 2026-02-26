@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc, increment } from 'firebase/firestore';
 import {
   ArrowRight,
   ClipboardPlus,
@@ -359,28 +359,39 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const finalParticipantsSnapshot = await getDocs(participantsColRef);
         const finalParticipants = finalParticipantsSnapshot.docs.map(doc => doc.data() as Participant);
 
-        const rankingsSnapshot = await getDocs(rankingsColRef);
-        const currentRankings: LeaderboardEntry[] = rankingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
         const batch = writeBatch(firestore);
 
-        finalParticipants.forEach(participant => {
-            const existingEntry = currentRankings.find(entry => entry.name === participant.name);
+        // Update each participant's monthly score and count of quizzes played
+        for (const participant of finalParticipants) {
+            const rankDocRef = doc(firestore, 'monthly_rankings', participant.id);
+            const rankDocSnap = await getDoc(rankDocRef);
+            
             const tonightScore = participant.jollyActive ? (participant.score * 2) : participant.score;
 
-            if (existingEntry && existingEntry.id) {
-                const rankDocRef = doc(firestore, 'monthly_rankings', existingEntry.id);
+            if (rankDocSnap.exists()) {
+                const existingData = rankDocSnap.data() as LeaderboardEntry;
                 batch.update(rankDocRef, {
-                    monthlyScore: (existingEntry.monthlyScore || 0) + tonightScore
+                    monthlyScore: (existingData.monthlyScore || 0) + tonightScore,
+                    quizzesPlayed: (existingData.quizzesPlayed || 0) + 1,
+                    avatar: participant.avatar, // keep avatar updated
+                    name: participant.name      // keep name updated
                 });
             } else {
-                const newRankDocRef = doc(collection(firestore, 'monthly_rankings'));
-                batch.set(newRankDocRef, {
+                batch.set(rankDocRef, {
                     name: participant.name,
                     monthlyScore: tonightScore,
                     avatar: participant.avatar,
+                    quizzesPlayed: 1
                 });
             }
-        });
+        }
+
+        // Increment the total number of quizzes held this month
+        if (settingsDocRef) {
+            batch.update(settingsDocRef, {
+                totalQuizzesHeld: increment(1)
+            });
+        }
 
         await batch.commit();
     } catch (error) {
@@ -411,11 +422,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         usersSnapshot.docs.forEach(userDoc => {
             batch.update(userDoc.ref, { jollyAvailable: true });
         });
+
+        // Reset total quizzes counter
+        if (settingsDocRef) {
+            batch.update(settingsDocRef, {
+                totalQuizzesHeld: 0
+            });
+        }
         
         await batch.commit();
         toast({
             title: "Classifica Azzerata!",
-            description: "La classifica è stata svuotata e i Jolly ripristinati a tutti i giocatori.",
+            description: "La classifica è stata svuotata, i Jolly ripristinati e i contatori azzerati.",
         });
     } catch (error) {
         console.error("Reset failed:", error);
@@ -704,7 +722,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: newValue });
     toast({
       title: newValue ? "Jolly Abilitato" : "Jolly Disabilitato",
-      description: newValue ? "I partecipanti possono ora vedere e usare il Jolly." : "La funzione Jolly è stata nascosta ai partecipanti.",
+      description: newValue ? "I partecipanti possono ora vedere e usare il Jolly (se idonei)." : "La funzione Jolly è stata nascosta ai partecipanti.",
     });
   }
 

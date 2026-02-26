@@ -435,8 +435,13 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             title: "Classifica Azzerata!",
             description: "La classifica è stata svuotata, i Jolly ripristinati e i contatori azzerati.",
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Reset failed:", error);
+        toast({
+            variant: "destructive",
+            title: "Errore durante il reset",
+            description: "Assicurati di avere i permessi necessari o riprova più tardi.",
+        });
     }
   };
 

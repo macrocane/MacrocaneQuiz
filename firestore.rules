@@ -29,11 +29,13 @@ service cloud.firestore {
       allow write: if isOwner(hostId);
     }
 
-    // User profiles are private.
+    // User profiles are private, but hosts can see/list them for administrative tasks (like Jolly reset).
     match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow list: if false;
-      allow create, update, delete: if isOwner(userId);
+      allow get: if isOwner(userId) || isHost();
+      allow list: if isHost();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isHost();
+      allow delete: if isOwner(userId);
     }
 
     // Quiz documents and their subcollections.

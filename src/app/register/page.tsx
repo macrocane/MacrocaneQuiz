@@ -60,6 +60,7 @@ export default function RegisterPage() {
         email: user.email!,
         nickname: nickname,
         icon: selectedAvatar,
+        jollyAvailable: true,
       };
 
       const userDocRef = doc(firestore, 'users', user.uid);

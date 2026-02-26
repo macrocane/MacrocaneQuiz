@@ -1,7 +1,6 @@
-
 "use client";
 
-import { Users, Trophy, Trash2, BookText } from "lucide-react";
+import { Users, Trophy, Trash2, BookText, Zap } from "lucide-react";
 import type { Participant, LeaderboardEntry } from "@/lib/types";
 import Link from "next/link";
 
@@ -59,18 +58,27 @@ export default function ParticipantsSidebar({
               <SidebarMenuItem key={participant.id}>
                 <div className="flex items-center justify-between w-full text-sm">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={participant.avatar} alt={participant.name} />
-                      <AvatarFallback>{participant.name.charAt(0)}</AvatarFallback>
-                    </Avatar>
+                    <div className="relative">
+                        <Avatar className="h-8 w-8">
+                            <AvatarImage src={participant.avatar} alt={participant.name} />
+                            <AvatarFallback>{participant.name.charAt(0)}</AvatarFallback>
+                        </Avatar>
+                        {participant.jollyActive && (
+                            <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-0.5 border border-white">
+                                <Zap className="h-2 w-2 text-white fill-white" />
+                            </div>
+                        )}
+                    </div>
                     <span className="font-medium">{participant.name}</span>
                   </div>
-                  <span className="font-mono font-semibold">{participant.score} pti</span>
+                  <div className="flex flex-col items-end">
+                    <span className="font-mono font-semibold">{participant.score} pti</span>
+                  </div>
                 </div>
               </SidebarMenuItem>
             ))
           ) : (
-            <p className="text-sm text-muted-foreground px-2">Ancora nessun partecipante.</p>
+            <p className="text-sm text-muted-foreground px-2">Anora nessun partecipante.</p>
           )}
         </SidebarMenu>
       </SidebarGroup>
@@ -107,7 +115,7 @@ export default function ParticipantsSidebar({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Sei assolutamente sicuro?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Questa azione non può essere annullata. Questo eliminerà permanentemente la classifica.
+                    Questa azione cancellerà permanentemente la classifica mensile e ripristinerà il gettone Jolly a tutti i giocatori.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

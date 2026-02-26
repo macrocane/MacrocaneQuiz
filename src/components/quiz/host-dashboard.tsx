@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -28,14 +26,15 @@ import {
   Loader2,
   RefreshCw,
   Save,
+  Zap,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 
-import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia } from "@/lib/types";
+import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia, AppSettings } from "@/lib/types";
 import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc } from '@/firebase';
 import { updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 import {
@@ -85,6 +84,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
 import MediaGallerySidebar from "@/components/quiz/media-gallery-sidebar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Switch } from "@/components/ui/switch";
 
 
 const questionSchema = z.object({
@@ -116,7 +116,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
 
-  // State for the new explicit scoring flow
   const [questionScores, setQuestionScores] = useState<Record<string, number>>({});
   const [hasScoresSavedForCurrentQ, setHasScoresSavedForCurrentQ] = useState(false);
   const [isSavingScores, setIsSavingScores] = useState(false);
@@ -124,6 +123,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const auth = useAuth();
   const { user } = useUser();
   const firestore = useFirestore();
+
+  const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
+  const { data: settings } = useDoc<AppSettings>(settingsDocRef);
 
   const quizDocRef = useMemoFirebase(() => quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
@@ -133,7 +135,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
-  // --- Start of Loop Fix ---
   const quizRef = useRef(quiz);
   const participantsRef = useRef(participants);
   const currentQuestionRef = useRef(currentQuestion);
@@ -167,7 +168,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       });
     }
   }, [isReadOnly, toast]);
-  // --- End of Loop Fix ---
 
   const resetQuiz = useCallback(() => {
     if (isReadOnly || !user) return;
@@ -365,17 +365,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
         finalParticipants.forEach(participant => {
             const existingEntry = currentRankings.find(entry => entry.name === participant.name);
+            const tonightScore = participant.jollyActive ? (participant.score * 2) : participant.score;
 
             if (existingEntry && existingEntry.id) {
                 const rankDocRef = doc(firestore, 'monthly_rankings', existingEntry.id);
                 batch.update(rankDocRef, {
-                    monthlyScore: (existingEntry.monthlyScore || 0) + participant.score
+                    monthlyScore: (existingEntry.monthlyScore || 0) + tonightScore
                 });
             } else {
                 const newRankDocRef = doc(collection(firestore, 'monthly_rankings'));
                 batch.set(newRankDocRef, {
                     name: participant.name,
-                    monthlyScore: participant.score,
+                    monthlyScore: tonightScore,
                     avatar: participant.avatar,
                 });
             }
@@ -396,19 +397,29 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const resetLeaderboard = async () => {
     if (isReadOnly || !rankingsColRef) return;
     
-    const rankingsSnapshot = await getDocs(rankingsColRef);
-    if (rankingsSnapshot.empty) return;
-    
-    const batch = writeBatch(firestore);
-    rankingsSnapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-    });
-    
-    await batch.commit();
-    toast({
-        title: "Classifica Azzerata!",
-        description: "La classifica è stata svuotata con successo.",
-    });
+    try {
+        const rankingsSnapshot = await getDocs(rankingsColRef);
+        const batch = writeBatch(firestore);
+        
+        rankingsSnapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        
+        // Reset Jolly to all users
+        const usersColRef = collection(firestore, 'users');
+        const usersSnapshot = await getDocs(usersColRef);
+        usersSnapshot.docs.forEach(userDoc => {
+            batch.update(userDoc.ref, { jollyAvailable: true });
+        });
+        
+        await batch.commit();
+        toast({
+            title: "Classifica Azzerata!",
+            description: "La classifica è stata svuotata e i Jolly ripristinati a tutti i giocatori.",
+        });
+    } catch (error) {
+        console.error("Reset failed:", error);
+    }
   };
 
   const handleFileUpload = (file: File) => {
@@ -575,16 +586,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     setIsSavingScores(true);
     try {
         const batch = writeBatch(firestore);
-        
-        // This is a direct read of the participants' state from the server
         const participantsSnapshot = await getDocs(participantsColRef);
         
         participantsSnapshot.docs.forEach(participantDoc => {
             const participantData = participantDoc.data() as Participant;
             const scoreForThisQuestion = questionScores[participantData.id] ?? 0;
             
-            // Note: This replaces the previous score on the answer document.
-            // This is a simpler model where the host's input is the source of truth for the score.
             const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, participantData.id);
             batch.set(answerRef, { score: scoreForThisQuestion }, { merge: true });
         });
@@ -610,20 +617,15 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const nextQuestion = async () => {
     if (!quiz || !quiz.questions || !quizDocRef || isReadOnly) return;
 
-    // Transition to the next question or end the quiz
     if (quiz.currentQuestionIndex < quiz.questions.length - 1) {
-        // There are more questions
         updateDocumentNonBlocking(quizDocRef, {
             state: "live",
             currentQuestionIndex: quiz.currentQuestionIndex + 1,
         });
-        // Reset state for the new question
         setQuestionScores({});
         setHasScoresSavedForCurrentQ(false);
     } else {
-        // This was the last question, end the quiz.
         try {
-            // Now, aggregate all scores
             const batch = writeBatch(firestore);
             const participantsSnapshot = await getDocs(participantsColRef!);
 
@@ -639,11 +641,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 batch.update(participantDoc.ref, { score: totalScore });
             }
             await batch.commit();
-
-            // After final scores are committed, update the leaderboard
             await updateLeaderboard();
-            
-            // Finally, set the quiz state to "results"
             updateDocumentNonBlocking(quizDocRef, { state: "results" });
 
         } catch (error) {
@@ -653,7 +651,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 title: "Errore Finale",
                 description: "Impossibile calcolare i punteggi finali o aggiornare la classifica.",
             });
-            // Still attempt to go to results page
             updateDocumentNonBlocking(quizDocRef, { state: "results" });
         }
     }
@@ -668,7 +665,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const participantRef = doc(firestore, `quizzes/${quizId}/participants`, p.id);
         batch.update(participantRef, { score: 0 });
       });
-      // Also reset answer scores
       quiz.questions.forEach(q => {
           participants.forEach(p => {
               const answerRef = doc(firestore, `quizzes/${quizId}/questions/${q.id}/answers`, p.id);
@@ -700,6 +696,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         case 'reorder': return 'Riordina';
         default: return '';
     }
+  }
+
+  const toggleJollyFunction = () => {
+    if (isReadOnly || !settingsDocRef) return;
+    const newValue = !settings?.jollyEnabled;
+    updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: newValue });
+    toast({
+      title: newValue ? "Jolly Abilitato" : "Jolly Disabilitato",
+      description: newValue ? "I partecipanti possono ora vedere e usare il Jolly." : "La funzione Jolly è stata nascosta ai partecipanti.",
+    });
   }
 
   if (!quiz) {
@@ -852,7 +858,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                 <FormLabel>File Multimediale</FormLabel>
                                 <FormControl>
                                     <div>
-                                        <Input 
+                                        <input 
                                             id="media-upload"
                                             type="file"
                                             accept="image/*,video/*,audio/*"
@@ -941,7 +947,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                             <Input placeholder={`Elemento ${index + 1}`} {...field} disabled={isReadOnly} />
                                         </FormControl>
                                         <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isReadOnly}>
-                                            <Trash2 className="h-4 w-4"/>
+                                            <Trash2 className="h-4 w-4" />
                                         </Button>
                                         </FormItem>
                                     )}
@@ -1028,7 +1034,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 <div className="flex justify-center gap-4 flex-wrap">
                    {participants.length > 0 ? participants.map(p => (
                     <div key={p.id} className="flex flex-col items-center gap-1">
-                      <img src={p.avatar} alt={p.name} className="w-12 h-12 rounded-full"/>
+                      <div className="relative">
+                        <img src={p.avatar} alt={p.name} className="w-12 h-12 rounded-full"/>
+                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-5 w-5 text-yellow-500 fill-yellow-500" />}
+                      </div>
                       <span className="text-sm font-medium">{p.name}</span>
                     </div>
                   )) : (
@@ -1113,7 +1122,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                     return (
                       <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border bg-muted/50">
                         <div className="flex items-center gap-3">
-                          <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                          <div className="relative">
+                            <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                            {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
+                          </div>
                           <span className="font-medium">{p.name}</span>
                         </div>
                         <span className="text-sm text-muted-foreground">In attesa di risposta...</span>
@@ -1124,7 +1136,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                   return (
                     <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border">
                       <div className="flex items-center gap-3">
-                        <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                        <div className="relative">
+                           <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                           {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
+                        </div>
                         <div>
                           <p className="font-medium">{p.name}</p>
                           {currentQuestion.type === 'reorder' ? (
@@ -1236,10 +1251,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                  <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
                     <div className="flex items-center gap-3">
                       <span className="font-bold text-lg w-6">{i+1}</span>
-                      <img src={p.avatar} alt={p.name} className="w-10 h-10 rounded-full" />
+                      <div className="relative">
+                        <img src={p.avatar} alt={p.name} className="w-10 h-10 rounded-full" />
+                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-4 w-4 text-yellow-500 fill-yellow-500" />}
+                      </div>
                       <span className="font-medium">{p.name}</span>
                     </div>
-                    <span className="text-lg font-bold">{p.score} pti</span>
+                    <div className="flex flex-col items-end">
+                        <span className="text-lg font-bold">{p.score} pti</span>
+                        {p.jollyActive && <span className="text-[10px] text-yellow-600 font-bold uppercase">Jolly Giocato!</span>}
+                    </div>
                   </div>
               ))}
             </CardContent>
@@ -1276,6 +1297,15 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             </div>
             <div className="ml-auto flex items-center gap-4">
                 <h1 className="text-lg font-semibold md:text-2xl font-headline capitalize truncate">{getQuizStateLabel()}</h1>
+                <div className="flex items-center gap-2 px-2 border-r pr-4">
+                  <Label htmlFor="jolly-toggle" className="text-xs font-semibold hidden md:block">Funzione Jolly</Label>
+                  <Switch 
+                    id="jolly-toggle" 
+                    checked={settings?.jollyEnabled ?? false} 
+                    onCheckedChange={toggleJollyFunction}
+                    disabled={isReadOnly}
+                  />
+                </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" size="icon" title="Reset Sessione">

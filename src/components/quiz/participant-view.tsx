@@ -1,19 +1,21 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { doc, onSnapshot, FirestoreError, getDoc, setDoc } from 'firebase/firestore';
+import { useState, useEffect } from 'react';
+import { doc, onSnapshot, FirestoreError, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
-import type { Quiz, Participant, Answer, UserProfile } from '@/lib/types';
+import { Loader2, GripVertical, ArrowUp, ArrowDown, Zap } from 'lucide-react';
+import type { Quiz, Participant, Answer, UserProfile, AppSettings } from '@/lib/types';
 import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Badge } from '@/components/ui/badge';
 
 type ParticipantStatus = 'loading' | 'joining' | 'waiting' | 'question' | 'answered' | 'question-results' | 'results';
 
@@ -26,19 +28,20 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const [reorderAnswers, setReorderAnswers] = useState<string[]>([]);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [isActivatingJolly, setIsActivatingJolly] = useState(false);
 
   const { user } = useUser();
   const firestore = useFirestore();
 
+  const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
+  const { data: settings } = useDoc<AppSettings>(settingsDocRef);
+
   const quizDocRef = useMemoFirebase(() => firestore && quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   
-  // This hook now manages the participant's data from the subcollection.
   const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
   const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
 
-  // Effect to join the quiz if not already joined
   useEffect(() => {
-    // Only try to join if we are logged in, the quiz is in the lobby, and we don't have participant data yet.
     if (user && quiz?.state === 'lobby' && !myParticipantData && !isParticipantLoading) {
       
       const joinQuiz = async () => {
@@ -48,13 +51,13 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
 
           let userName = user.email?.split('@')[0] || 'Giocatore Misterioso';
           let userAvatar = PlaceHolderImages[0].imageUrl;
+          let jollyAvailable = true;
 
           if (userDocSnap.exists()) {
             const userProfile = userDocSnap.data() as UserProfile;
             userName = userProfile.nickname;
             userAvatar = userProfile.icon;
-          } else {
-            console.warn(`User profile for ${user.uid} not found. Using default values.`);
+            jollyAvailable = userProfile.jollyAvailable ?? true;
           }
 
           const newParticipant: Participant = {
@@ -62,9 +65,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             name: userName,
             avatar: userAvatar,
             score: 0,
+            jollyActive: false,
+            jollyAvailable: jollyAvailable,
           };
           
-          // Create the participant document. `useDoc` will automatically pick up this change.
           if(participantDocRef) {
             await setDoc(participantDocRef, newParticipant);
           }
@@ -79,7 +83,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     }
   }, [user, quiz?.state, myParticipantData, isParticipantLoading, firestore, quizId, participantDocRef]);
 
-  // Effect to listen for quiz state changes from Firestore
   useEffect(() => {
     if (!quizDocRef) return;
 
@@ -100,7 +103,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                     if (hasAlreadyAnswered) {
                         setStatus('answered');
                     } else {
-                        // Check if it's a new question to reset the state
                         if (quiz?.currentQuestionIndex !== quizData.currentQuestionIndex || prevQuizState !== 'live') {
                             setAnswer('');
                             setReorderAnswers(currentQuestionFromHost.options ? [...currentQuestionFromHost.options].sort(() => Math.random() - 0.5) : []);
@@ -116,7 +118,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                     setStatus('waiting');
                 }
             } else if (quizData.state === 'lobby') {
-                 // If we don't have participant data yet, but we are in the lobby, show joining status.
                  setStatus('joining');
             }
 
@@ -131,6 +132,24 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     return () => unsubscribe();
   }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state]);
   
+  const handleActivateJolly = async () => {
+    if (!user || !participantDocRef || !firestore || !myParticipantData?.jollyAvailable) return;
+    setIsActivatingJolly(true);
+    try {
+        const batch = writeBatch(firestore);
+        const userDocRef = doc(firestore, 'users', user.uid);
+        
+        batch.update(userDocRef, { jollyAvailable: false });
+        batch.update(participantDocRef, { jollyActive: true, jollyAvailable: false });
+        
+        await batch.commit();
+    } catch (e) {
+        console.error("Error activating Jolly:", e);
+    } finally {
+        setIsActivatingJolly(false);
+    }
+  };
+
   const handleSubmit = () => {
     if (!startTime || !quiz || !myParticipantData || !firestore || !quiz.questions) return;
 
@@ -139,7 +158,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     
     const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
     
-    // --- Automatic Scoring Logic ---
     let calculatedScore = 0;
     if (needsMultipleChoice) {
       if (answer === currentQuestion.correctAnswer) {
@@ -151,8 +169,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             calculatedScore = STANDARD_SCORE;
         }
     }
-    // Open-ended questions will have a score of 0, for the host to update manually.
-    // --- End of Automatic Scoring Logic ---
 
     const responseTime = (Date.now() - startTime) / 1000;
     
@@ -271,13 +287,44 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
         }
 
         return (
-          <div className="flex flex-col items-center gap-4 text-center">
+          <div className="flex flex-col items-center gap-6 text-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-muted-foreground">{waitingMessage()}</p>
              {myParticipantData && (
-                <div className="flex items-center gap-3 rounded-full bg-muted p-2">
-                    <Image src={myParticipantData.avatar} alt={myParticipantData.name} width={32} height={32} className="w-8 h-8 rounded-full" />
-                    <span className="font-medium text-sm">{myParticipantData.name}</span>
+                <div className="flex flex-col items-center gap-4">
+                    <div className="flex items-center gap-3 rounded-full bg-muted p-2">
+                        <Image src={myParticipantData.avatar} alt={myParticipantData.name} width={32} height={32} className="w-8 h-8 rounded-full" />
+                        <span className="font-medium text-sm">{myParticipantData.name}</span>
+                        {myParticipantData.jollyActive && <Zap className="h-4 w-4 text-yellow-500 fill-yellow-500" />}
+                    </div>
+                    
+                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && (
+                        <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                                <Button variant="secondary" className="gap-2" disabled={isActivatingJolly}>
+                                    <Zap className="h-4 w-4" /> Gioca Jolly
+                                </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle>Sei sicuro di voler giocare il Jolly?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                        Il Jolly raddoppierà il tuo punteggio finale per questo quiz. Ne hai solo uno a disposizione per tutto il mese! Una volta attivato, non potrai tornare indietro.
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel>Annulla</AlertDialogCancel>
+                                    <AlertDialogAction onClick={handleActivateJolly}>Conferma e Attiva</AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                        </AlertDialog>
+                    )}
+                    
+                    {myParticipantData.jollyActive && quiz?.state === 'lobby' && (
+                         <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50 gap-1 p-2">
+                            <Zap className="h-3 w-3 fill-yellow-600" /> Jolly Attivato! Punteggio raddoppiato per questa serata.
+                        </Badge>
+                    )}
                 </div>
             )}
           </div>
@@ -294,7 +341,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
 
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold">{currentQuestion.text}</h2>
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold">{currentQuestion.text}</h2>
+                {myParticipantData?.jollyActive && <Zap className="h-6 w-6 text-yellow-500 fill-yellow-500 animate-pulse" title="Jolly Attivo" />}
+            </div>
 
             {currentQuestion.mediaUrl && ['image', 'video', 'audio'].includes(currentQuestion.type) && (
                 <div className="w-full max-w-md mx-auto aspect-video relative bg-muted rounded-lg">
@@ -351,7 +401,12 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                 <div className="flex flex-col items-center gap-4 text-center">
                     <h2 className="text-2xl font-bold">Quiz Terminato!</h2>
                     <p className="text-muted-foreground">Grazie per aver partecipato. I risultati sono stati mostrati dall'host.</p>
-                    {myParticipantData && <p className="text-lg font-semibold">Il tuo punteggio finale: {finalScore} punti</p>}
+                    {myParticipantData && (
+                        <div className="flex flex-col items-center gap-2">
+                            <p className="text-lg font-semibold">Il tuo punteggio finale: {finalScore} punti</p>
+                            {myParticipantData.jollyActive && <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 border-yellow-200">Bonus Jolly Applicato!</Badge>}
+                        </div>
+                    )}
                      <Button onClick={() => {
                         window.location.href = '/';
                      }}>Torna alla Home</Button>

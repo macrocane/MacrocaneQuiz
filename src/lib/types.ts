@@ -1,5 +1,3 @@
-
-
 export type Host = {
   id: string;
   username: string;
@@ -21,6 +19,8 @@ export type Participant = {
   name: string;
   avatar: string;
   score: number;
+  jollyActive?: boolean; // If true, the score for this quiz will be doubled
+  jollyAvailable?: boolean; // Helper to show the button in UI
 };
 
 export type Answer = {
@@ -64,8 +64,10 @@ export type UserProfile = {
     email: string;
     nickname: string;
     icon: string;
+    jollyAvailable?: boolean;
 };
 
 export type AppSettings = {
   rules: string;
+  jollyEnabled?: boolean;
 };

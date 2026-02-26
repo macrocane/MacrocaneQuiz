@@ -79,6 +79,7 @@ export default function CompleteProfilePage() {
         email: user.email!,
         nickname: nickname,
         icon: selectedAvatar,
+        jollyAvailable: true,
       };
 
       const userDocRef = doc(firestore, 'users', user.uid);

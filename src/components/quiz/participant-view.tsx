@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { doc, onSnapshot, FirestoreError, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, FirestoreError, getDoc, setDoc, collection, query, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, GripVertical, ArrowUp, ArrowDown, Zap } from 'lucide-react';
+import { Loader2, GripVertical, ArrowUp, ArrowDown, Zap, Info, Tags } from 'lucide-react';
 import type { Quiz, Participant, Answer, UserProfile, AppSettings, LeaderboardEntry } from '@/lib/types';
-import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
+import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
@@ -36,6 +36,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
   const { data: settings } = useDoc<AppSettings>(settingsDocRef);
 
+  // Fetch all participants for this quiz
+  const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
+  const { data: allParticipants } = useCollection<Participant>(participantsColRef);
+
   // Fetch the user's monthly ranking to check attendance
   const userRankingDocRef = useMemoFirebase(() => (firestore && user) ? doc(firestore, 'monthly_rankings', user.uid) : null, [firestore, user]);
   const { data: userRanking } = useDoc<LeaderboardEntry>(userRankingDocRef);
@@ -44,6 +48,11 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   
   const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
   const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
+
+  // Listen for answers to the CURRENT question
+  const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
+  const answersColRef = useMemoFirebase(() => (quizId && currentQuestion) ? collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`) : null, [firestore, quizId, currentQuestion?.id]);
+  const { data: currentQuestionAnswers } = useCollection<Answer>(answersColRef);
 
   // A user is eligible for Jolly if they have missed at least one quiz this month
   const isEligibleForJolly = useMemo(() => {
@@ -107,20 +116,14 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             if (myParticipantData) {
                 const currentQuestionFromHost = quizData.questions?.[quizData.currentQuestionIndex];
                 
-                const hasAlreadyAnswered = quizData.answers?.some(
-                    a => a.participantId === myParticipantData.id && a.questionId === currentQuestionFromHost?.id
-                );
-
                 if (quizData.state === 'live' && currentQuestionFromHost) {
-                    if (hasAlreadyAnswered) {
-                        setStatus('answered');
-                    } else {
-                        if (quiz?.currentQuestionIndex !== quizData.currentQuestionIndex || prevQuizState !== 'live') {
-                            setAnswer('');
-                            setReorderAnswers(currentQuestionFromHost.options ? [...currentQuestionFromHost.options].sort(() => Math.random() - 0.5) : []);
-                            setStartTime(Date.now());
-                            setStatus('question');
-                        }
+                    if (status === 'answered' && prevQuizState === 'live') {
+                        // Stay in answered
+                    } else if (quiz?.currentQuestionIndex !== quizData.currentQuestionIndex || prevQuizState !== 'live') {
+                        setAnswer('');
+                        setReorderAnswers(currentQuestionFromHost.options ? [...currentQuestionFromHost.options].sort(() => Math.random() - 0.5) : []);
+                        setStartTime(Date.now());
+                        setStatus('question');
                     }
                 } else if (quizData.state === 'question-results') {
                     setStatus('question-results');
@@ -142,7 +145,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     });
 
     return () => unsubscribe();
-  }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state]);
+  }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state, status]);
   
   const handleActivateJolly = async () => {
     if (!user || !participantDocRef || !firestore || !myParticipantData?.jollyAvailable || !isEligibleForJolly) return;
@@ -210,12 +213,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
     setReorderAnswers(newOrder);
   };
   
-  const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
   const finalScore = myParticipantData?.score ?? 0;
 
-
   const renderContent = () => {
-    if (status === 'loading' || isParticipantLoading && status !== 'joining') {
+    if (status === 'loading' || (isParticipantLoading && status !== 'joining')) {
         return (
              <div className="flex flex-col items-center gap-4 text-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -255,7 +256,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
             if (quiz.state === 'lobby') return "Sei nella lobby! In attesa che l'host inizi il quiz...";
             return 'In attesa della prossima domanda...';
         };
-        const myAnswer = status === 'question-results' && currentQuestion && myParticipantData ? quiz.answers?.find(a => a.participantId === myParticipantData.id && a.questionId === currentQuestion.id) : undefined;
+        const myAnswer = status === 'question-results' && currentQuestion && myParticipantData ? currentQuestionAnswers?.find(a => a.participantId === myParticipantData.id) : undefined;
         
         if (status === 'question-results' && currentQuestion) {
              return (
@@ -274,8 +275,8 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                     
                     <h3 className="text-lg font-semibold">Risposte degli altri:</h3>
                     <div className="space-y-2">
-                        {quiz.participants && quiz.answers && quiz.participants.map(p => {
-                            const pAnswer = quiz.answers?.find(a => a.participantId === p.id && a.questionId === currentQuestion.id);
+                        {allParticipants && allParticipants.map(p => {
+                            const pAnswer = currentQuestionAnswers?.find(a => a.participantId === p.id);
                             return (
                                 <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg">
                                     <div className="flex items-center gap-3">
@@ -300,6 +301,21 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
 
         return (
           <div className="flex flex-col items-center gap-6 text-center">
+            {quiz?.state === 'lobby' && quiz.topics && quiz.topics.some(t => t !== "") && (
+              <Card className="w-full bg-accent/5 border-accent/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                    <Tags className="h-4 w-4" /> Temi della serata
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap justify-center gap-2 pb-4">
+                  {quiz.topics.filter(t => t !== "").map((topic, idx) => (
+                    <Badge key={idx} variant="outline" className="bg-background/50 px-3 py-1 text-sm">{topic}</Badge>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-muted-foreground">{waitingMessage()}</p>
              {myParticipantData && (
@@ -311,36 +327,44 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                     </div>
                     
                     {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && isEligibleForJolly && (
-                        <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                                <Button variant="secondary" className="gap-2" disabled={isActivatingJolly}>
-                                    <Zap className="h-4 w-4" /> Gioca Jolly
-                                </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Sei sicuro di voler giocare il Jolly?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        Il Jolly raddoppierà il tuo punteggio finale per questo quiz. È disponibile solo per i partecipanti che soddisfano i criteri di idoneità per questa sessione. Ne hai solo uno a disposizione per l'intero mese!
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Annulla</AlertDialogCancel>
-                                    <AlertDialogAction onClick={handleActivateJolly}>Conferma e Attiva</AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
+                        <div className="space-y-3">
+                            <p className="text-xs text-primary font-bold animate-pulse">
+                                Hai sbloccato un potenziale vantaggio per stasera! Scoprilo cliccando il tasto qui sotto.
+                            </p>
+                            <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="secondary" className="gap-2" disabled={isActivatingJolly}>
+                                        <Zap className="h-4 w-4" /> Gioca Jolly
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Vuoi attivare il tuo Jolly?</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                            Attivando il Jolly per questa serata, **raddoppierai il tuo punteggio finale** accumulato nel quiz corrente.
+                                            <br /><br />
+                                            È un vantaggio unico e limitato. Una volta confermato, non potrai più tornare indietro per questa serata e il gettone mensile verrà consumato.
+                                        </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel>Annulla</AlertDialogCancel>
+                                        <AlertDialogAction onClick={handleActivateJolly}>Conferma e Raddoppia</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                        </div>
                     )}
 
                     {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && !isEligibleForJolly && (
-                        <div className="text-xs text-muted-foreground mt-2 max-w-xs italic">
-                            Il Jolly è disponibile solo per i partecipanti idonei in base allo storico di partecipazione del mese.
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-2 max-w-xs italic border p-2 rounded-md">
+                            <Info className="h-3 w-3 shrink-0" />
+                            <span>La funzione Jolly è soggetta a parametri di bilanciamento dinamico e non è attualmente disponibile per il tuo profilo in questa sessione.</span>
                         </div>
                     )}
                     
                     {myParticipantData.jollyActive && quiz?.state === 'lobby' && (
                          <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50 gap-1 p-2">
-                            <Zap className="h-3 w-3 fill-yellow-600" /> Jolly Attivato! Punteggio raddoppiato per questa serata.
+                            <Zap className="h-3 w-3 fill-yellow-600" /> Jolly Attivato! Il tuo punteggio finale sarà raddoppiato.
                         </Badge>
                     )}
                 </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useUser, useAuth, useFirestore } from '@/firebase';
+import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
 import { Loader2, Trophy, LogOut, BookText } from 'lucide-react';
@@ -9,6 +9,7 @@ import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import type { AppSettings } from '@/lib/types';
 
 export default function Home() {
   const { user, isUserLoading } = useUser();
@@ -17,7 +18,10 @@ export default function Home() {
   const { isHost, isHostLoading } = useHost(user?.uid);
   const router = useRouter();
 
-  if (isUserLoading || isHostLoading) {
+  const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
+  const { data: settings, isLoading: isSettingsLoading } = useDoc<AppSettings>(settingsDocRef);
+
+  if (isUserLoading || isHostLoading || isSettingsLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -40,12 +44,18 @@ export default function Home() {
 
   // If the user is logged in, but not a host, show the participant view.
   if (!isHost) {
+     const isLeaderboardVisible = settings?.leaderboardEnabled ?? false;
+
      return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center">
         <h1 className="text-2xl font-bold">Accesso Partecipante</h1>
         <p className="text-muted-foreground">Sei loggato come partecipante. Usa un link d'invito per unirti a un quiz o controlla la classifica.</p>
         <div className="flex flex-wrap justify-center gap-4">
-          <Button onClick={() => router.push('/leaderboard')}>
+          <Button 
+            onClick={() => router.push('/leaderboard')} 
+            disabled={!isLeaderboardVisible}
+            title={!isLeaderboardVisible ? "La classifica è temporaneamente nascosta dall'host." : ""}
+          >
             <Trophy className="mr-2"/>
             Vai alla Classifica
           </Button>
@@ -60,12 +70,16 @@ export default function Home() {
             Esci
           </Button>
         </div>
+        {!isLeaderboardVisible && (
+          <p className="text-[10px] text-muted-foreground italic mt-2">
+            Nota: La classifica mensile viene abilitata periodicamente dall'host.
+          </p>
+        )}
       </div>
     );
   }
   
   // If the user is a host, they have full permissions.
-  // The isReadOnly concept is simplified: you are either a host or not.
   return (
     <main>
       <HostDashboard isReadOnly={false} />

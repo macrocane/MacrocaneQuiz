@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Save,
   Zap,
+  Tags,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -110,6 +111,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [quizId, setQuizId] = useState<string | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [inviteLink, setInviteLink] = useState("");
+  const [topics, setTopics] = useState<string[]>(["", "", ""]);
   const { toast } = useToast();
   
   const [mediaGallery, setMediaGallery] = useState<StoredMedia[]>([]);
@@ -179,7 +181,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       state: "creating",
       questions: [],
       currentQuestionIndex: 0,
+      topics: ["", "", ""],
     });
+    setTopics(["", "", ""]);
     setParticipants([]);
     setAnswers([]);
     setQuestionScores({});
@@ -209,6 +213,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         const draftQuiz = JSON.parse(draftJson) as Quiz;
         if (draftQuiz && draftQuiz.state === 'creating') {
           setQuiz(draftQuiz);
+          if (draftQuiz.topics) setTopics(draftQuiz.topics);
           return;
         }
       }
@@ -227,6 +232,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             state: "creating",
             questions: [],
             currentQuestionIndex: 0,
+            topics: ["", "", ""],
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -245,8 +251,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
         localStorage.removeItem(QUIZ_DRAFT_KEY);
       } else if (quiz?.state === 'creating') {
-        if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
-          localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(quiz));
+        if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico" || topics.some(t => t !== "")) {
+          const draftToSave = { ...quiz, topics };
+          localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify(draftToSave));
         } else {
           localStorage.removeItem(QUIZ_DRAFT_KEY);
         }
@@ -254,7 +261,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     } catch (error) {
       console.error("Error saving session to localStorage:", error);
     }
-  }, [quiz, quizId]);
+  }, [quiz, quizId, topics]);
   
   useEffect(() => {
     if (!quizDocRef) {
@@ -573,6 +580,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       state: "lobby",
       questions: quiz.questions,
       currentQuestionIndex: 0,
+      topics: topics,
     };
     
     const newQuizDocRef = doc(firestore, "quizzes", newQuizId);
@@ -731,6 +739,16 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
   }
 
+  const toggleLeaderboardVisibility = () => {
+    if (isReadOnly || !settingsDocRef) return;
+    const newValue = !settings?.leaderboardEnabled;
+    updateDocumentNonBlocking(settingsDocRef, { leaderboardEnabled: newValue });
+    toast({
+      title: newValue ? "Classifica Visibile" : "Classifica Nascosta",
+      description: newValue ? "I partecipanti possono ora accedere alla classifica mensile." : "Il pulsante della classifica è stato nascosto ai partecipanti.",
+    });
+  }
+
   if (!quiz) {
     return <div className="flex h-screen w-full items-center justify-center"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
   }
@@ -761,7 +779,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                   <Pencil size={24} /> Dettagli del Quiz
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 <div className="space-y-2">
                     <Label htmlFor="quiz-name">Nome del Quiz</Label>
                     <Input
@@ -771,6 +789,27 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         placeholder="Es. Quiz di Cultura Generale"
                         disabled={isReadOnly}
                     />
+                </div>
+                <div className="space-y-3">
+                   <Label className="flex items-center gap-2">
+                     <Tags className="h-4 w-4" /> Temi della Serata (3 argomenti)
+                   </Label>
+                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {topics.map((topic, idx) => (
+                        <Input 
+                          key={idx}
+                          placeholder={`Tema ${idx + 1}`}
+                          value={topic}
+                          onChange={(e) => {
+                            const newTopics = [...topics];
+                            newTopics[idx] = e.target.value;
+                            setTopics(newTopics);
+                          }}
+                          disabled={isReadOnly}
+                        />
+                      ))}
+                   </div>
+                   <p className="text-[10px] text-muted-foreground">Questi temi verranno mostrati ai partecipanti nella lobby.</p>
                 </div>
               </CardContent>
             </Card>
@@ -1047,6 +1086,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
               <CardDescription>Condividi il link qui sotto per invitare i partecipanti. Il quiz inizierà quando sarai pronto.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {quiz.topics && quiz.topics.some(t => t !== "") && (
+                <div className="p-4 rounded-lg bg-accent/10 border border-accent/20">
+                  <h3 className="text-sm font-bold uppercase tracking-wider mb-2 flex items-center justify-center gap-2">
+                    <Tags className="h-4 w-4" /> Temi della serata
+                  </h3>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {quiz.topics.filter(t => t !== "").map((t, idx) => (
+                      <Badge key={idx} variant="secondary">{t}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-center gap-2 p-4 rounded-lg bg-muted border border-dashed">
                 <LinkIcon className="h-5 w-5 text-muted-foreground"/>
                 <span className="text-lg font-mono tracking-wider">{inviteLink}</span>
@@ -1320,14 +1371,25 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             </div>
             <div className="ml-auto flex items-center gap-4">
                 <h1 className="text-lg font-semibold md:text-2xl font-headline capitalize truncate">{getQuizStateLabel()}</h1>
-                <div className="flex items-center gap-2 px-2 border-r pr-4">
-                  <Label htmlFor="jolly-toggle" className="text-xs font-semibold hidden md:block">Funzione Jolly</Label>
-                  <Switch 
-                    id="jolly-toggle" 
-                    checked={settings?.jollyEnabled ?? false} 
-                    onCheckedChange={toggleJollyFunction}
-                    disabled={isReadOnly}
-                  />
+                <div className="flex items-center gap-4 px-4 border-r pr-6">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="jolly-toggle" className="text-xs font-semibold hidden md:block">Jolly</Label>
+                    <Switch 
+                      id="jolly-toggle" 
+                      checked={settings?.jollyEnabled ?? false} 
+                      onCheckedChange={toggleJollyFunction}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="leaderboard-toggle" className="text-xs font-semibold hidden md:block">Classifica</Label>
+                    <Switch 
+                      id="leaderboard-toggle" 
+                      checked={settings?.leaderboardEnabled ?? false} 
+                      onCheckedChange={toggleLeaderboardVisibility}
+                      disabled={isReadOnly}
+                    />
+                  </div>
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

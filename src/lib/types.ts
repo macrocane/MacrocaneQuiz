@@ -50,6 +50,7 @@ export type Quiz = {
   state: "creating" | "lobby" | "live" | "question-results" | "results";
   questions: Question[];
   currentQuestionIndex: number;
+  topics?: string[]; // The 3 topics for the evening
 }
 
 export type StoredMedia = {
@@ -71,5 +72,6 @@ export type UserProfile = {
 export type AppSettings = {
   rules: string;
   jollyEnabled?: boolean;
+  leaderboardEnabled?: boolean;
   totalQuizzesHeld?: number; // Total number of quizzes held this month
 };

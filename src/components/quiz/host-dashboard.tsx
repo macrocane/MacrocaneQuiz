@@ -1369,11 +1369,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 <LayoutGrid className="h-6 w-6 text-primary" />
                 <span className="font-headline text-xl">MaestroDiQuiz</span>
             </div>
-            <div className="ml-auto flex items-center gap-4">
-                <h1 className="text-lg font-semibold md:text-2xl font-headline capitalize truncate">{getQuizStateLabel()}</h1>
-                <div className="flex items-center gap-4 px-4 border-r pr-6">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="jolly-toggle" className="text-xs font-semibold hidden md:block">Jolly</Label>
+            <div className="ml-auto flex items-center gap-2 sm:gap-4">
+                <h1 className="text-base sm:text-lg font-semibold md:text-2xl font-headline capitalize truncate hidden sm:block">{getQuizStateLabel()}</h1>
+                <div className="flex items-center gap-2 sm:gap-4 px-2 sm:px-4 border-r pr-2 sm:pr-6">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-4 w-4 text-yellow-500" />
                     <Switch 
                       id="jolly-toggle" 
                       checked={settings?.jollyEnabled ?? false} 
@@ -1381,8 +1381,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                       disabled={isReadOnly}
                     />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="leaderboard-toggle" className="text-xs font-semibold hidden md:block">Classifica</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Trophy className="h-4 w-4 text-primary" />
                     <Switch 
                       id="leaderboard-toggle" 
                       checked={settings?.leaderboardEnabled ?? false} 

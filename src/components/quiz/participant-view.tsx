@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 
 type ParticipantStatus = 'loading' | 'joining' | 'waiting' | 'question' | 'answered' | 'question-results' | 'results';
 
-const STANDARD_SCORE = 10;
+const STANDARD_SCORE = 0;
 
 export default function ParticipantView({ quizId }: { quizId: string }) {
   const [status, setStatus] = useState<ParticipantStatus>('loading');

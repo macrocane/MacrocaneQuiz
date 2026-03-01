@@ -3,7 +3,7 @@
 import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
-import { Loader2, Trophy, LogOut, BookText } from 'lucide-react';
+import { Loader2, Trophy, LogOut, BookText, UserCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
 import { useEffect } from 'react';
@@ -47,11 +47,12 @@ export default function Home() {
      const isLeaderboardVisible = settings?.leaderboardEnabled ?? false;
 
      return (
-      <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center">
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center px-4">
         <h1 className="text-2xl font-bold">Accesso Partecipante</h1>
         <p className="text-muted-foreground">Sei loggato come partecipante. Usa un link d'invito per unirti a un quiz o controlla la classifica.</p>
-        <div className="flex flex-wrap justify-center gap-4">
+        <div className="flex flex-wrap justify-center gap-4 max-w-md">
           <Button 
+            className="w-full sm:w-auto"
             onClick={() => router.push('/leaderboard')} 
             disabled={!isLeaderboardVisible}
             title={!isLeaderboardVisible ? "La classifica è temporaneamente nascosta dall'host." : ""}
@@ -59,13 +60,19 @@ export default function Home() {
             <Trophy className="mr-2"/>
             Vai alla Classifica
           </Button>
-          <Button variant="secondary" asChild>
+          <Button variant="secondary" asChild className="w-full sm:w-auto">
             <Link href="/rules">
               <BookText className="mr-2"/>
               Regolamento
             </Link>
           </Button>
-          <Button variant="outline" onClick={() => auth.signOut()}>
+          <Button variant="outline" asChild className="w-full sm:w-auto">
+            <Link href="/profile">
+              <UserCircle className="mr-2"/>
+              Il mio Profilo
+            </Link>
+          </Button>
+          <Button variant="outline" onClick={() => auth.signOut()} className="w-full sm:w-auto">
             <LogOut className="mr-2"/>
             Esci
           </Button>

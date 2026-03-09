@@ -916,40 +916,47 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         />
 
                         {['image', 'video', 'audio'].includes(questionType) && (
-                            <FormItem className="mt-6">
-                                <FormLabel>File Multimediale</FormLabel>
-                                <FormControl>
-                                    <div>
-                                        <input 
-                                            id="media-upload"
-                                            type="file"
-                                            accept="image/*,video/*,audio/*"
-                                            className="sr-only"
-                                            onChange={(e) => {
-                                                if (e.target.files && e.target.files[0]) {
-                                                    handleFileUpload(e.target.files[0]);
-                                                }
-                                            }}
-                                            disabled={isReadOnly}
-                                        />
-                                        <Label htmlFor="media-upload" className={cn("w-full", isReadOnly ? "cursor-not-allowed" : "")}>
-                                            <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", isReadOnly ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
-                                                <Upload className="h-5 w-5 text-muted-foreground"/>
-                                                <span className="text-muted-foreground">Fai clic per caricare un file</span>
-                                            </div>
-                                        </Label>
-                                        {form.getValues('mediaUrl') && (
-                                            <div className="mt-2 text-sm text-muted-foreground">
-                                                File selezionato! Puoi vederlo nella galleria.
-                                            </div>
-                                        )}
-                                    </div>
-                                </FormControl>
-                                <FormDescription>
-                                    Carica un'immagine, video o file audio per la tua domanda.
-                                </FormDescription>
-                                <FormMessage />
-                            </FormItem>
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                                <FormItem>
+                                    <FormLabel>Carica File</FormLabel>
+                                    <FormControl>
+                                        <div>
+                                            <input 
+                                                id="media-upload"
+                                                type="file"
+                                                accept="image/*,video/*,audio/*"
+                                                className="sr-only"
+                                                onChange={(e) => {
+                                                    if (e.target.files && e.target.files[0]) {
+                                                        handleFileUpload(e.target.files[0]);
+                                                    }
+                                                }}
+                                                disabled={isReadOnly}
+                                            />
+                                            <Label htmlFor="media-upload" className={cn("w-full", isReadOnly ? "cursor-not-allowed" : "")}>
+                                                <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", isReadOnly ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
+                                                    <Upload className="h-5 w-5 text-muted-foreground"/>
+                                                    <span className="text-muted-foreground">Sfoglia</span>
+                                                </div>
+                                            </Label>
+                                        </div>
+                                    </FormControl>
+                                    <FormDescription>Locale (limite 5MB)</FormDescription>
+                                </FormItem>
+                                <FormField
+                                    control={form.control}
+                                    name="mediaUrl"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Oppure URL Esterno</FormLabel>
+                                            <FormControl>
+                                                <Input placeholder="https://..." {...field} value={field.value ?? ""} disabled={isReadOnly} />
+                                            </FormControl>
+                                            <FormDescription>Consigliato per file grandi</FormDescription>
+                                        </FormItem>
+                                    )}
+                                />
+                             </div>
                         )}
 
                         {showOptions && (

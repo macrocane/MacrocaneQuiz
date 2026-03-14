@@ -4,27 +4,17 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, writeBatch, FirestoreError, getDocs, getDoc, increment, query, orderBy } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, writeBatch, deleteDoc, getDoc, query, orderBy } from 'firebase/firestore';
 import {
   ArrowRight,
   ClipboardPlus,
   Copy,
-  LayoutGrid,
-  Link as LinkIcon,
-  ListChecks,
-  Play,
   Trash2,
   Trophy,
-  AlertTriangle,
-  Upload,
-  GripVertical,
   Pencil,
-  Home,
   SkipForward,
-  Eye,
   LogOut,
   Loader2,
-  RefreshCw,
   Save,
   Zap,
 } from "lucide-react";
@@ -34,16 +24,15 @@ import '@uploadcare/react-uploader/core.css';
 
 import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia, AppSettings } from "@/lib/types";
 import { detectCheating } from "@/ai/flows/detect-cheating";
-import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc } from '@/firebase';
 import { updateDocumentNonBlocking, setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { deleteUploadcareFile } from "@/app/actions/uploadcare";
 
 import {
   SidebarProvider,
   Sidebar,
   SidebarInset,
-  SidebarHeader,
   SidebarContent,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
@@ -51,8 +40,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -61,11 +48,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
-  FormMessage,
 } from "@/components/ui/form";
 import {
   RadioGroup,
@@ -114,7 +99,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
-
   const [questionScores, setQuestionScores] = useState<Record<string, number>>({});
   const [hasScoresSavedForCurrentQ, setHasScoresSavedForCurrentQ] = useState(false);
   const [isSavingScores, setIsSavingScores] = useState(false);
@@ -132,11 +116,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const quizDocRef = useMemoFirebase(() => quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
 
-  const rankingsColRef = useMemoFirebase(() => collection(firestore, 'monthly_rankings'), [firestore]);
-  const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
-
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
-
   const quizRef = useRef(quiz);
   const participantsRef = useRef(participants);
   const currentQuestionRef = useRef(currentQuestion);
@@ -161,12 +141,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     });
     
     const participant = currentParticipants.find(p => p.id === answer.participantId);
-
     if (isCheating && participant) {
       toast({
         variant: "destructive",
-        title: "Potenziale Tentativo di Barare Rilevato!",
-        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
+        title: "Sospetto Cheating!",
+        description: `${participant.name} potrebbe barare: ${reason}`,
       });
     }
   }, [isReadOnly, toast]);
@@ -183,12 +162,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       currentQuestionIndex: 0,
       topics: ["", "", ""],
     });
-    setTopics(["", "", ""]);
-    setParticipants([]);
-    setAnswers([]);
-    setQuestionScores({});
-    setHasScoresSavedForCurrentQ(false);
-    setIsSavingScores(false);
     if (typeof window !== 'undefined') {
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
@@ -205,13 +178,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       if (draftJson) {
         try {
           const draftQuiz = JSON.parse(draftJson) as Quiz;
-          if (draftQuiz && draftQuiz.state === 'creating') {
+          if (draftQuiz?.state === 'creating') {
             setQuiz(draftQuiz);
             if (draftQuiz.topics) setTopics(draftQuiz.topics);
           }
-        } catch (e) {
-          console.error("Draft parsing failed", e);
-        }
+        } catch (e) { console.error("Draft parsing failed", e); }
       }
     }
     
@@ -229,26 +200,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   }, [user]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (quizId && quiz?.state !== 'creating') {
-      localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
-      localStorage.removeItem(QUIZ_DRAFT_KEY);
-    } else if (quiz?.state === 'creating') {
-      if (quiz && (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico")) {
-        localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ ...quiz, topics }));
-      }
-    }
-  }, [quiz, quizId, topics]);
-  
-  useEffect(() => {
     if (!quizDocRef) return;
     const unsubscribe = onSnapshot(quizDocRef, (docSnap) => {
       if (docSnap.exists()) {
-        const quizData = docSnap.data() as Quiz;
-        setQuiz(quizData);
-      } else {
-        resetQuiz();
-      }
+        setQuiz(docSnap.data() as Quiz);
+      } else { resetQuiz(); }
     });
     return () => unsubscribe();
   }, [quizDocRef, resetQuiz]);
@@ -269,8 +225,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         setAnswers([]);
         return;
     }
-    const questions = quiz.questions;
-    const unsubscribers = questions.map(q => {
+    const unsubscribers = quiz.questions.map(q => {
         const qAnswersRef = collection(firestore, `quizzes/${quizId}/questions/${q.id}/answers`);
         return onSnapshot(qAnswersRef, (snapshot) => {
             const newAnswers = snapshot.docs.map(doc => doc.data() as Answer);
@@ -298,12 +253,30 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     };
     setDocumentNonBlocking(doc(firestore, 'media_gallery', newMedia.id), newMedia, { merge: true });
     form.setValue('mediaUrl', dataUrl);
-    toast({ title: "Media Caricato!", description: "Il file è pronto per essere usato." });
+    toast({ title: "Media Caricato!", description: "File salvato nella galleria." });
   }
 
-  const deleteMedia = (id: string) => {
+  const deleteMedia = async (id: string) => {
     if (isReadOnly) return;
-    setDoc(doc(firestore, 'media_gallery', id), { deleted: true }, { merge: true });
+    const mediaItem = mediaGallery?.find(m => m.id === id);
+    if (!mediaItem) return;
+
+    toast({ title: "Eliminazione in corso...", description: "Sto rimuovendo il file da Uploadcare." });
+
+    // 1. Elimina fisicamente da Uploadcare tramite Server Action
+    const result = await deleteUploadcareFile(mediaItem.url);
+
+    if (result.success) {
+      // 2. Elimina il riferimento da Firestore
+      try {
+        await deleteDoc(doc(firestore, 'media_gallery', id));
+        toast({ title: "Eliminato!", description: "File rimosso definitivamente." });
+      } catch (e) {
+        toast({ variant: "destructive", title: "Errore Firestore", description: "File rimosso da Uploadcare ma non dal database." });
+      }
+    } else {
+      toast({ variant: "destructive", title: "Errore Eliminazione", description: result.error });
+    }
   };
 
   const form = useForm<z.infer<typeof questionSchema>>({
@@ -345,9 +318,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       await setDoc(newQuizDocRef, { ...quiz, id: newQuizId, hostId: user.uid, state: "lobby", topics });
       setQuizId(newQuizId);
       setInviteLink(`${window.location.origin}/join/${newQuizId}`);
-    } catch (error) {
-      toast({ variant: "destructive", title: "Errore!", description: "Impossibile creare il quiz." });
-    }
+    } catch (error) { toast({ variant: "destructive", title: "Errore!" }); }
   };
 
   const beginQuiz = () => quizDocRef && updateDocumentNonBlocking(quizDocRef, { state: "live", currentQuestionIndex: 0 });
@@ -366,11 +337,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         await batch.commit();
         setHasScoresSavedForCurrentQ(true);
         toast({ title: "Punteggi Salvati!" });
-    } catch (error) {
-        toast({ variant: "destructive", title: "Errore salvataggio" });
-    } finally {
-        setIsSavingScores(false);
-    }
+    } catch (error) { toast({ variant: "destructive", title: "Errore" }); } finally { setIsSavingScores(false); }
   };
 
   const nextQuestion = async () => {
@@ -394,9 +361,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
   };
 
-  const toggleJollyFunction = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: !settings?.jollyEnabled });
-  const toggleLeaderboardVisibility = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { leaderboardEnabled: !settings?.leaderboardEnabled });
-
   const renderContent = () => {
     if (!quiz) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
 
@@ -408,10 +372,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             <Card>
               <CardHeader><CardTitle className="font-headline flex items-center gap-2"><Pencil size={24} /> Dettagli del Quiz</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <Input value={quiz.name} onChange={(e) => setQuiz(prev => prev ? ({ ...prev, name: e.target.value }) : null)} placeholder="Nome del Quiz" disabled={isReadOnly} />
+                <Input value={quiz.name} onChange={(e) => setQuiz(prev => prev ? ({ ...prev, name: e.target.value }) : null)} placeholder="Nome del Quiz" />
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {topics.map((t, i) => (
-                    <Input key={i} placeholder={`Tema ${i + 1}`} value={t} onChange={(e) => { const n = [...topics]; n[i] = e.target.value; setTopics(n); }} disabled={isReadOnly} />
+                    <Input key={i} placeholder={`Tema ${i + 1}`} value={t} onChange={(e) => { const n = [...topics]; n[i] = e.target.value; setTopics(n); }} />
                   ))}
                 </div>
               </CardContent>
@@ -425,7 +389,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                       <FormField control={form.control} name="type" render={({ field }) => (
                         <FormItem>
                           <FormLabel>Tipo</FormLabel>
-                          <Select onValueChange={(v) => { field.onChange(v); form.setValue('answerType', v === 'multiple-choice' ? undefined : 'multiple-choice'); }} value={field.value} disabled={isReadOnly}>
+                          <Select onValueChange={(v) => { field.onChange(v); form.setValue('answerType', v === 'multiple-choice' ? undefined : 'multiple-choice'); }} value={field.value}>
                             <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                             <SelectContent>
                               <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
@@ -442,7 +406,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         <FormField control={form.control} name="answerType" render={({ field }) => (
                           <FormItem>
                             <FormLabel>Risposta</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value!} disabled={isReadOnly}>
+                            <Select onValueChange={field.onChange} value={field.value!}>
                               <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                               <SelectContent>
                                 <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
@@ -454,7 +418,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                       )}
                     </div>
                     <FormField control={form.control} name="text" render={({ field }) => (
-                      <FormItem><FormLabel>Domanda</FormLabel><FormControl><Textarea {...field} disabled={isReadOnly} /></FormControl></FormItem>
+                      <FormItem><FormLabel>Domanda</FormLabel><FormControl><Textarea {...field} /></FormControl></FormItem>
                     )} />
                     {['image', 'video', 'audio'].includes(questionType) && (
                         <div className="space-y-4">
@@ -466,7 +430,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     imgOnly={questionType === 'image'}
                                 />
                                 <FormField control={form.control} name="mediaUrl" render={({ field }) => (
-                                    <Input placeholder="Incolla URL qui" {...field} value={field.value || ""} disabled={isReadOnly} />
+                                    <Input placeholder="Incolla URL qui" {...field} value={field.value || ""} />
                                 )} />
                             </div>
                         </div>
@@ -475,7 +439,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         <FormField key={item.id} control={form.control} name={`options.${index}.value`} render={({ field }) => (
                             <div className="flex gap-2 items-center">
                                 <RadioGroup value={form.watch('correctAnswer')} onValueChange={(v) => form.setValue('correctAnswer', v)}><RadioGroupItem value={index.toString()} /></RadioGroup>
-                                <Input {...field} disabled={isReadOnly} />
+                                <Input {...field} />
                                 <Button size="icon" variant="ghost" type="button" onClick={() => remove(index)}><Trash2 className="h-4 w-4" /></Button>
                             </div>
                         )} />
@@ -486,13 +450,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 </Form>
               </CardContent>
             </Card>
-            {quiz.questions.map((q, i) => (
-                <div key={q.id} className="p-3 border rounded-lg flex justify-between items-center bg-card">
-                    <span>{i + 1}. {q.text}</span>
-                    <Button variant="ghost" size="icon" onClick={() => setQuiz(prev => prev ? ({ ...prev, questions: prev.questions.filter(qu => qu.id !== q.id) }) : null)}><Trash2 className="h-4 w-4" /></Button>
-                </div>
-            ))}
-            <Button onClick={startQuiz} className="w-full" size="lg" disabled={!quiz.questions.length || isReadOnly}>Crea Lobby <ArrowRight className="ml-2" /></Button>
+            <Button onClick={startQuiz} className="w-full" size="lg" disabled={!quiz.questions.length}>Crea Lobby <ArrowRight className="ml-2" /></Button>
           </div>
         );
       case "lobby":
@@ -501,13 +459,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             <CardTitle className="text-3xl">Lobby del Quiz</CardTitle>
             <div className="p-4 bg-muted font-mono flex items-center justify-center gap-2 rounded-lg">
               {inviteLink} 
-              <Button size="icon" variant="ghost" onClick={() => { navigator.clipboard.writeText(inviteLink); toast({ title: "Link Copiato!" }); }}><Copy size={16} /></Button>
+              <Button size="icon" variant="ghost" onClick={() => { navigator.clipboard.writeText(inviteLink); toast({ title: "Copiato!" }); }}><Copy size={16} /></Button>
             </div>
-            <div className="flex justify-center gap-4 flex-wrap">
-              {participants.map(p => <div key={p.id} className="text-center"><img src={p.avatar} className="w-12 h-12 rounded-full mb-1 mx-auto" alt={p.name} />{p.name}</div>)}
-              {participants.length === 0 && <p className="text-muted-foreground">In attesa di partecipanti...</p>}
-            </div>
-            <Button onClick={beginQuiz} className="w-full" size="lg" disabled={isReadOnly}>Inizia Quiz</Button>
+            <Button onClick={beginQuiz} className="w-full" size="lg">Inizia Quiz</Button>
           </Card>
         );
       case "live":
@@ -517,51 +471,29 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             <Card className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <Badge variant="outline">Domanda {quiz.currentQuestionIndex + 1} di {quiz.questions.length}</Badge>
-                  <Badge className="bg-primary">{currentQuestion?.type.toUpperCase()}</Badge>
                 </div>
                 <CardTitle className="text-2xl mb-4">{currentQuestion?.text}</CardTitle>
-                {currentQuestion?.mediaUrl && (
-                  <div className="relative aspect-video max-h-64 mx-auto my-4 overflow-hidden rounded-lg">
-                    {currentQuestion.type === 'image' ? <img src={currentQuestion.mediaUrl} className="object-contain w-full h-full" alt="Domanda" /> : 
-                     currentQuestion.type === 'video' ? <video src={currentQuestion.mediaUrl} controls className="w-full h-full" /> : 
-                     <audio src={currentQuestion.mediaUrl} controls className="w-full mt-10" />}
-                  </div>
-                )}
-                <Progress value={((quiz.currentQuestionIndex + 1) / quiz.questions.length) * 100} className="mt-6" />
+                <Progress value={((quiz.currentQuestionIndex + 1) / quiz.questions.length) * 100} />
             </Card>
             <Card className="p-6 space-y-4">
                 <CardTitle className="flex justify-between items-center">
-                  <span>Risposte Ricevute</span>
-                  <Badge variant="secondary">{answers.filter(a => a.questionId === currentQuestion?.id).length}/{participants.length}</Badge>
+                  <span>Risposte</span>
+                  <Badge>{answers.filter(a => a.questionId === currentQuestion?.id).length}/{participants.length}</Badge>
                 </CardTitle>
                 <div className="space-y-2">
                   {participants.map(p => {
                       const ans = answers.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id);
                       return (
                           <div key={p.id} className="flex justify-between items-center p-3 border rounded bg-card">
-                              <div className="flex items-center gap-2">
-                                <img src={p.avatar} className="w-8 h-8 rounded-full" alt={p.name} />
-                                <span className="font-medium">{p.name}:</span>
-                                <span className="text-muted-foreground italic">{ans?.answerText || "In attesa..."}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Label className="text-xs">Punti:</Label>
-                                <Input type="number" value={questionScores[p.id] ?? 0} onChange={(e) => setQuestionScores({ ...questionScores, [p.id]: parseInt(e.target.value) || 0 })} className="w-20 h-8" disabled={isReadOnly} />
-                              </div>
+                              <span>{p.name}: {ans?.answerText || "..."}</span>
+                              <Input type="number" value={questionScores[p.id] ?? 0} onChange={(e) => setQuestionScores({ ...questionScores, [p.id]: parseInt(e.target.value) || 0 })} className="w-20" />
                           </div>
                       );
                   })}
                 </div>
-                <div className="flex gap-2 pt-4">
-                    <Button variant="outline" onClick={showQuestionResults} disabled={isReadOnly}>Mostra Corretta</Button>
-                    <Button variant="secondary" onClick={saveScoresForCurrentQuestion} disabled={isReadOnly || isSavingScores}>
-                      {isSavingScores ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                      Salva Punteggi
-                    </Button>
-                    <Button onClick={nextQuestion} className="flex-1 bg-accent text-accent-foreground" disabled={!hasScoresSavedForCurrentQ || isReadOnly}>
-                      {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina Quiz"}
-                      <SkipForward className="ml-2 h-4 w-4" />
-                    </Button>
+                <div className="flex gap-2">
+                    <Button variant="secondary" onClick={saveScoresForCurrentQuestion}>Salva Punti</Button>
+                    <Button onClick={nextQuestion} className="flex-1" disabled={!hasScoresSavedForCurrentQ}>Prossima <SkipForward className="ml-2" /></Button>
                 </div>
             </Card>
           </div>
@@ -569,23 +501,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       case "results":
         return (
             <Card className="text-center p-6 space-y-6">
-                <CardTitle className="text-3xl font-headline">Classifica Finale 🏆</CardTitle>
-                <div className="space-y-3">
-                  {[...participants].sort((a,b) => b.score - a.score).map((p, i) => (
-                      <div key={p.id} className={cn("flex justify-between p-4 border rounded-lg", i === 0 ? "bg-yellow-50 border-yellow-200" : "bg-card")}>
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-lg">{i + 1}.</span>
-                          <img src={p.avatar} className="w-10 h-10 rounded-full" alt={p.name} />
-                          <span className="font-bold">{p.name}</span>
-                        </div>
-                        <span className="font-mono font-bold text-xl">{p.score} pti</span>
-                      </div>
-                  ))}
-                </div>
-                <Button onClick={resetQuiz} className="w-full" size="lg" disabled={isReadOnly}>Nuovo Quiz</Button>
+                <CardTitle className="text-3xl">Classifica Finale 🏆</CardTitle>
+                <Button onClick={resetQuiz} className="w-full">Nuovo Quiz</Button>
             </Card>
         );
-      default: return <div className="flex h-full items-center justify-center text-muted-foreground">Stato quiz sconosciuto.</div>;
+      default: return null;
     }
   };
 
@@ -596,25 +516,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             <SidebarTrigger className="md:hidden"/>
             <span className="font-headline text-xl text-primary font-bold">MaestroDiQuiz</span>
             <div className="ml-auto flex items-center gap-4">
-                <div className="hidden sm:flex items-center gap-4 border-r pr-4">
-                    <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-yellow-500" />
-                      <Label className="text-xs">Jolly</Label>
-                      <Switch checked={settings?.jollyEnabled} onCheckedChange={toggleJollyFunction} disabled={isReadOnly}/>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Trophy className="h-4 w-4 text-primary" />
-                      <Label className="text-xs">Classifica</Label>
-                      <Switch checked={settings?.leaderboardEnabled} onCheckedChange={toggleLeaderboardVisibility} disabled={isReadOnly}/>
-                    </div>
-                </div>
+                <Switch checked={settings?.jollyEnabled} onCheckedChange={(v) => updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: v })} />
                 <Button variant="ghost" size="icon" onClick={() => auth.signOut()}><LogOut size={20} /></Button>
             </div>
         </header>
         <div className="flex flex-1 overflow-hidden">
           <Sidebar>
             <SidebarContent>
-              <ParticipantsSidebar participants={participants} leaderboard={leaderboard || []} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
+              <ParticipantsSidebar participants={participants} leaderboard={mediaGallery as any || []} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
               <MediaGallerySidebar mediaItems={mediaGallery || []} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
             </SidebarContent>
           </Sidebar>

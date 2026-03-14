@@ -27,7 +27,6 @@ import {
   RefreshCw,
   Save,
   Zap,
-  Tags,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { FileUploaderRegular } from '@uploadcare/react-uploader/next';
@@ -235,7 +234,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
     } else if (quiz?.state === 'creating') {
-      if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
+      if (quiz && (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico")) {
         localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ ...quiz, topics }));
       }
     }
@@ -477,7 +476,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                             <div className="flex gap-2 items-center">
                                 <RadioGroup value={form.watch('correctAnswer')} onValueChange={(v) => form.setValue('correctAnswer', v)}><RadioGroupItem value={index.toString()} /></RadioGroup>
                                 <Input {...field} disabled={isReadOnly} />
-                                <Button size="icon" variant="ghost" onClick={() => remove(index)}><Trash2 className="h-4 w-4" /></Button>
+                                <Button size="icon" variant="ghost" type="button" onClick={() => remove(index)}><Trash2 className="h-4 w-4" /></Button>
                             </div>
                         )} />
                     ))}

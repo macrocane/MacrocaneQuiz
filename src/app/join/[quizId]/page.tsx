@@ -8,7 +8,11 @@ import { Loader2 } from 'lucide-react';
 import { useHost } from '@/hooks/use-host';
 import HostDashboard from '@/components/quiz/host-dashboard';
 
-export default function JoinQuizPage({ params }: { params: { quizId: string } }) {
+interface JoinQuizPageProps {
+  params: Promise<{ quizId: string }>;
+}
+
+export default function JoinQuizPage({ params }: JoinQuizPageProps) {
   const { quizId } = use(params);
   const { user, isUserLoading } = useUser();
   const { isHost, isHostLoading } = useHost(user?.uid);
@@ -22,7 +26,11 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
   }, [user, isUserLoading, router, quizId]);
 
   if (isUserLoading || isHostLoading) {
-    return <div className="flex h-screen w-full items-center justify-center bg-background"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
   }
 
   if (user && isHost) {

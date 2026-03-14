@@ -32,11 +32,11 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const { data: myData } = useDoc<Participant>(participantDocRef);
 
   useEffect(() => {
-    if (user && quizId && !myData) {
+    if (user && quizId && !myData && firestore) {
       const join = async () => {
         const profile = await getDoc(doc(firestore, 'users', user.uid));
         const data = profile.data() as UserProfile;
-        await setDoc(participantDocRef!, {
+        await setDoc(doc(firestore, `quizzes/${quizId}/participants`, user.uid), {
             id: user.uid,
             name: data?.nickname || user.email?.split('@')[0],
             avatar: data?.icon || PlaceHolderImages[0].imageUrl,
@@ -46,10 +46,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
       };
       join();
     }
-  }, [user, quizId, myData, firestore, participantDocRef]);
+  }, [user, quizId, myData, firestore]);
 
   useEffect(() => {
-    if (!quizId) return;
+    if (!quizId || !firestore) return;
     const unsub = onSnapshot(doc(firestore, "quizzes", quizId), (snap) => {
         if (snap.exists()) {
             const q = snap.data() as Quiz;
@@ -59,7 +59,7 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                 setStartTime(Date.now());
             } else if (q.state === 'results') {
                 setStatus('results');
-            } else {
+            } else if (q.state === 'lobby' || q.state === 'creating') {
                 setStatus('waiting');
             }
         }
@@ -68,15 +68,15 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   }, [quizId, firestore]);
 
   const handleSubmit = () => {
-    if (!startTime || !quiz || !myData) return;
+    if (!startTime || !quiz || !myData || !user) return;
     const responseTime = (Date.now() - startTime) / 1000;
-    const ansRef = doc(firestore, `quizzes/${quizId}/questions/${quiz.questions[quiz.currentQuestionIndex].id}/answers`, user!.uid);
+    const ansRef = doc(firestore, `quizzes/${quizId}/questions/${quiz.questions[quiz.currentQuestionIndex].id}/answers`, user.uid);
     setDocumentNonBlocking(ansRef, {
-        participantId: user!.uid,
+        participantId: user.uid,
         questionId: quiz.questions[quiz.currentQuestionIndex].id,
         answerText: answer,
         responseTime: parseFloat(responseTime.toFixed(3)),
-        score: 0 // Il punteggio viene assegnato dall'host
+        score: 0 
     }, { merge: true });
     setStatus('answered');
   };
@@ -88,22 +88,26 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
         <CardContent>
             {status === 'loading' && <Loader2 className="animate-spin mx-auto" />}
             {status === 'waiting' && <p>In attesa dell'host...</p>}
+            {status === 'answered' && <p>Risposta inviata! In attesa dei risultati...</p>}
             {status === 'question' && (
                 <div className="space-y-4">
                     <p className="text-xl font-bold">{quiz?.questions[quiz.currentQuestionIndex].text}</p>
                     {quiz?.questions[quiz.currentQuestionIndex].type === 'multiple-choice' ? (
-                        <RadioGroup value={answer} onValueChange={setAnswer} className="text-left">
+                        <RadioGroup value={answer} onValueChange={setAnswer} className="text-left space-y-2">
                             {quiz.questions[quiz.currentQuestionIndex].options?.map((o, i) => (
-                                <div key={i} className="flex items-center gap-2"><RadioGroupItem value={o} id={o} /><Label htmlFor={o}>{o}</Label></div>
+                                <div key={i} className="flex items-center gap-2 p-2 border rounded hover:bg-muted cursor-pointer">
+                                  <RadioGroupItem value={o} id={`o-${i}`} />
+                                  <Label htmlFor={`o-${i}`} className="flex-1 cursor-pointer">{o}</Label>
+                                </div>
                             ))}
                         </RadioGroup>
                     ) : (
-                        <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Tua risposta..." />
+                        <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Scrivi qui la tua risposta..." />
                     )}
-                    <Button onClick={handleSubmit} className="w-full" disabled={!answer}>Invia</Button>
+                    <Button onClick={handleSubmit} className="w-full" size="lg" disabled={!answer}>Invia Risposta</Button>
                 </div>
             )}
-            {status === 'results' && <p>Quiz terminato! Il tuo punteggio: {myData?.score} pti</p>}
+            {status === 'results' && <p className="text-2xl font-bold">Quiz terminato! Il tuo punteggio finale: {myData?.score} pti</p>}
         </CardContent>
       </Card>
     </div>

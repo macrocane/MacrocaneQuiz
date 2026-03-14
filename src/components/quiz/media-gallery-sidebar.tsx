@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 
 interface MediaGallerySidebarProps {
   mediaItems: StoredMedia[];
-  onDeleteMedia: (id: string) => void;
+  onDeleteMedia: (media: StoredMedia) => void;
   isReadOnly: boolean;
 }
 
@@ -42,7 +42,7 @@ export default function MediaGallerySidebar({
       <SidebarGroup className="flex-1">
         <SidebarGroupLabel className="flex items-center gap-2">
           <ImagePlay className="h-5 w-5" />
-          Galleria
+          Galleria Cloud
         </SidebarGroupLabel>
         <SidebarMenu>
           {mediaItems.length > 0 ? (
@@ -54,10 +54,10 @@ export default function MediaGallerySidebar({
                         <img src={media.url} alt={media.name} className="h-8 w-8 rounded object-cover"/>
                     ) : (
                         <div className="h-8 w-8 rounded bg-muted flex items-center justify-center">
-                            <span className="text-xs">{media.type.split('/')[0]}</span>
+                            <span className="text-[8px] uppercase">{media.type.split('/')[0]}</span>
                         </div>
                     )}
-                    <span className="font-medium truncate">{media.name}</span>
+                    <span className="font-medium truncate max-w-[100px]">{media.name}</span>
                   </div>
 
                    <AlertDialog>
@@ -70,12 +70,12 @@ export default function MediaGallerySidebar({
                         <AlertDialogHeader>
                           <AlertDialogTitle>Sei assolutamente sicuro?</AlertDialogTitle>
                           <AlertDialogDescription>
-                            Questa azione non può essere annullata. Questo eliminerà permanentemente il file multimediale.
+                            Questa azione eliminerà permanentemente il file dal Cloud Storage.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Annulla</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => onDeleteMedia(media.id)}>Continua</AlertDialogAction>
+                          <AlertDialogAction onClick={() => onDeleteMedia(media)}>Continua</AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>

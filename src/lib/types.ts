@@ -7,40 +7,40 @@ export type Question = {
   id: string;
   text: string;
   type: 'multiple-choice' | 'open-ended' | 'image' | 'video' | 'audio' | 'reorder';
-  mediaUrl?: string | null; // For image, video, audio
-  answerType?: 'multiple-choice' | 'open-ended' | null; // For media questions
+  mediaUrl?: string | null;
+  answerType?: 'multiple-choice' | 'open-ended' | null;
   options?: string[];
   correctAnswer?: string | null;
   correctOrder?: string[];
 };
 
 export type Participant = {
-  id: string; // Corresponds to Firebase Auth UID
+  id: string;
   name: string;
   avatar: string;
   score: number;
-  jollyActive?: boolean; // If true, the score for this quiz will be doubled
-  jollyAvailable?: boolean; // Helper to show the button in UI
+  jollyActive?: boolean;
+  jollyAvailable?: boolean;
 };
 
 export type Answer = {
   participantId: string;
   questionId: string;
   answerText: string;
-  answerOrder?: string[]; // For reorder answers
-  responseTime: number; // in seconds
+  answerOrder?: string[];
+  responseTime: number;
   isCheating?: boolean;
   cheatingReason?: string;
   score?: number;
 };
 
 export type LeaderboardEntry = {
-  id?: string; // document id from firestore (user UID)
-  rank?: number; // rank is calculated client-side
+  id?: string;
+  rank?: number;
   name: string;
   monthlyScore: number;
   avatar: string;
-  quizzesPlayed?: number; // Number of quizzes this user participated in this month
+  quizzesPlayed?: number;
 };
 
 export type Quiz = {
@@ -50,19 +50,20 @@ export type Quiz = {
   state: "creating" | "lobby" | "live" | "question-results" | "results";
   questions: Question[];
   currentQuestionIndex: number;
-  topics?: string[]; // The 3 topics for the evening
+  topics?: string[];
 }
 
 export type StoredMedia = {
     id: string;
     name: string;
     type: string;
-    url: string; // data URL
+    url: string;
+    storagePath?: string;
     createdAt: string;
 }
 
 export type UserProfile = {
-    id: string; // Firebase Auth UID
+    id: string;
     email: string;
     nickname: string;
     icon: string;
@@ -73,5 +74,5 @@ export type AppSettings = {
   rules: string;
   jollyEnabled?: boolean;
   leaderboardEnabled?: boolean;
-  totalQuizzesHeld?: number; // Total number of quizzes held this month
+  totalQuizzesHeld?: number;
 };

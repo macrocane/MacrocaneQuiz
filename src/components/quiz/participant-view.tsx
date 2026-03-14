@@ -36,11 +36,9 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
   const { data: settings } = useDoc<AppSettings>(settingsDocRef);
 
-  // Fetch all participants for this quiz
   const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
   const { data: allParticipants } = useCollection<Participant>(participantsColRef);
 
-  // Fetch the user's monthly ranking to check attendance
   const userRankingDocRef = useMemoFirebase(() => (firestore && user) ? doc(firestore, 'monthly_rankings', user.uid) : null, [firestore, user]);
   const { data: userRanking } = useDoc<LeaderboardEntry>(userRankingDocRef);
 
@@ -49,12 +47,10 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
   const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
 
-  // Listen for answers to the CURRENT question
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
   const answersColRef = useMemoFirebase(() => (quizId && currentQuestion) ? collection(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`) : null, [firestore, quizId, currentQuestion?.id]);
   const { data: currentQuestionAnswers } = useCollection<Answer>(answersColRef);
 
-  // A user is eligible for Jolly if they have missed at least one quiz this month
   const isEligibleForJolly = useMemo(() => {
     if (!settings) return false;
     const totalHeld = settings.totalQuizzesHeld || 0;
@@ -118,7 +114,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
                 
                 if (quizData.state === 'live' && currentQuestionFromHost) {
                     if (status === 'answered' && prevQuizState === 'live') {
-                        // Stay in answered
                     } else if (quiz?.currentQuestionIndex !== quizData.currentQuestionIndex || prevQuizState !== 'live') {
                         setAnswer('');
                         setReorderAnswers(currentQuestionFromHost.options ? [...currentQuestionFromHost.options].sort(() => Math.random() - 0.5) : []);

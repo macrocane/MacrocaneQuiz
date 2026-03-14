@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc, increment } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc, increment, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import {
   ArrowRight,
   ClipboardPlus,
@@ -35,7 +36,7 @@ import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia
 import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc } from '@/firebase';
+import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc, useStorage } from '@/firebase';
 import { updateDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 import {
@@ -87,7 +88,6 @@ import MediaGallerySidebar from "@/components/quiz/media-gallery-sidebar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 
-
 const questionSchema = z.object({
   text: z.string().min(10, "La domanda deve contenere almeno 10 caratteri."),
   type: z.enum(["multiple-choice", "open-ended", "image", "video", "audio", "reorder"]),
@@ -99,9 +99,8 @@ const questionSchema = z.object({
   correctAnswer: z.string().optional(),
 });
 
-const MEDIA_GALLERY_KEY = 'quiz-media-gallery';
-const QUIZ_DRAFT_KEY = 'quiz-draft';
 const ACTIVE_QUIZ_ID_KEY = 'active-quiz-id';
+const QUIZ_DRAFT_KEY = 'quiz-draft';
 
 interface HostDashboardProps {
   isReadOnly: boolean;
@@ -114,17 +113,18 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [topics, setTopics] = useState<string[]>(["", "", ""]);
   const { toast } = useToast();
   
-  const [mediaGallery, setMediaGallery] = useState<StoredMedia[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
 
   const [questionScores, setQuestionScores] = useState<Record<string, number>>({});
   const [hasScoresSavedForCurrentQ, setHasScoresSavedForCurrentQ] = useState(false);
   const [isSavingScores, setIsSavingScores] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   
   const auth = useAuth();
   const { user } = useUser();
   const firestore = useFirestore();
+  const storage = useStorage();
 
   const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
   const { data: settings } = useDoc<AppSettings>(settingsDocRef);
@@ -134,6 +134,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const rankingsColRef = useMemoFirebase(() => collection(firestore, 'monthly_rankings'), [firestore]);
   const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
+
+  const mediaGalleryColRef = useMemoFirebase(() => collection(firestore, 'media_gallery'), [firestore]);
+  const { data: mediaGallery } = useCollection<StoredMedia>(mediaGalleryColRef);
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
@@ -235,7 +238,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             topics: ["", "", ""],
         });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -347,18 +349,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 }, [quizId, questionsIdentifier, firestore, handleNewAnswer]);
 
 
-
-  useEffect(() => {
-    try {
-        const storedMedia = localStorage.getItem(MEDIA_GALLERY_KEY);
-        if (storedMedia) {
-            setMediaGallery(JSON.parse(storedMedia));
-        }
-    } catch (error) {
-        console.error("Could not load data from localStorage", error);
-    }
-  }, []);
-
   const updateLeaderboard = async () => {
     if (isReadOnly || !rankingsColRef || !participantsColRef) return;
     
@@ -368,7 +358,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
         const batch = writeBatch(firestore);
 
-        // Update each participant's monthly score and count of quizzes played
         for (const participant of finalParticipants) {
             const rankDocRef = doc(firestore, 'monthly_rankings', participant.id);
             const rankDocSnap = await getDoc(rankDocRef);
@@ -380,8 +369,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 batch.update(rankDocRef, {
                     monthlyScore: (existingData.monthlyScore || 0) + tonightScore,
                     quizzesPlayed: (existingData.quizzesPlayed || 0) + 1,
-                    avatar: participant.avatar, // keep avatar updated
-                    name: participant.name      // keep name updated
+                    avatar: participant.avatar,
+                    name: participant.name
                 });
             } else {
                 batch.set(rankDocRef, {
@@ -393,7 +382,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             }
         }
 
-        // Increment the total number of quizzes held this month
         if (settingsDocRef) {
             batch.update(settingsDocRef, {
                 totalQuizzesHeld: increment(1)
@@ -423,14 +411,12 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             batch.delete(doc.ref);
         });
         
-        // Reset Jolly to all users
         const usersColRef = collection(firestore, 'users');
         const usersSnapshot = await getDocs(usersColRef);
         usersSnapshot.docs.forEach(userDoc => {
             batch.update(userDoc.ref, { jollyAvailable: true });
         });
 
-        // Reset total quizzes counter
         if (settingsDocRef) {
             batch.update(settingsDocRef, {
                 totalQuizzesHeld: 0
@@ -452,61 +438,66 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     }
   };
 
-  const handleFileUpload = (file: File) => {
-    if (isReadOnly) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
+  const handleFileUpload = async (file: File) => {
+    if (isReadOnly || !user) return;
+    setIsUploading(true);
+    
+    try {
+        const fileId = uuidv4();
+        const storageRef = ref(storage, `quiz_media/${fileId}_${file.name}`);
+        const uploadTask = await uploadBytesResumable(storageRef, file);
+        const downloadURL = await getDownloadURL(uploadTask.ref);
+
         const newMedia: StoredMedia = {
-            id: uuidv4(),
+            id: fileId,
             name: file.name,
             type: file.type,
-            url: dataUrl,
+            url: downloadURL,
+            storagePath: storageRef.fullPath,
             createdAt: new Date().toISOString()
         };
         
-        setMediaGallery(prev => {
-            const updatedGallery = [...prev, newMedia];
-            try {
-                localStorage.setItem(MEDIA_GALLERY_KEY, JSON.stringify(updatedGallery));
-            } catch (error) {
-                console.error("Could not save media to localStorage", error);
-                toast({
-                    variant: "destructive",
-                    title: "Errore di Salvataggio",
-                    description: "Spazio di archiviazione locale insufficiente per salvare il file.",
-                });
-                return prev;
-            }
-            form.setValue('mediaUrl', dataUrl);
-            return updatedGallery;
+        await setDoc(doc(firestore, 'media_gallery', fileId), newMedia);
+        
+        form.setValue('mediaUrl', downloadURL);
+        toast({
+            title: "Caricamento completato",
+            description: "Il file è stato caricato con successo sul cloud.",
         });
-    };
-    reader.onerror = () => {
+    } catch (error) {
+        console.error("Upload failed:", error);
         toast({
             variant: "destructive",
-            title: "Errore di Lettura File",
-            description: "Impossibile leggere il file selezionato.",
+            title: "Caricamento fallito",
+            description: "Impossibile caricare il file. Riprova più tardi.",
         });
+    } finally {
+        setIsUploading(false);
     }
-    reader.readAsDataURL(file);
   }
 
-  const deleteMedia = (id: string) => {
+  const deleteMedia = async (media: StoredMedia) => {
     if (isReadOnly) return;
-    setMediaGallery(prev => {
-        const updatedGallery = prev.filter(media => media.id !== id);
-        try {
-            localStorage.setItem(MEDIA_GALLERY_KEY, JSON.stringify(updatedGallery));
-             toast({
-                title: "Media Eliminato",
-                description: "Il file è stato rimosso dalla galleria.",
-            });
-        } catch (error) {
-            console.error("Could not update media gallery in localStorage", error);
+    try {
+        if (media.storagePath) {
+            const storageRef = ref(storage, media.storagePath);
+            await deleteObject(storageRef);
         }
-        return updatedGallery;
-    });
+        
+        await deleteDoc(doc(firestore, 'media_gallery', media.id));
+        
+        toast({
+            title: "Media Eliminato",
+            description: "Il file è stato rimosso dalla galleria.",
+        });
+    } catch (error) {
+        console.error("Delete failed:", error);
+        toast({
+            variant: "destructive",
+            title: "Eliminazione fallita",
+            description: "Impossibile eliminare il file.",
+        });
+    }
   };
 
 
@@ -918,7 +909,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         {['image', 'video', 'audio'].includes(questionType) && (
                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                                 <FormItem>
-                                    <FormLabel>Carica File</FormLabel>
+                                    <FormLabel>Carica su Cloud Storage</FormLabel>
                                     <FormControl>
                                         <div>
                                             <input 
@@ -931,17 +922,17 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                                         handleFileUpload(e.target.files[0]);
                                                     }
                                                 }}
-                                                disabled={isReadOnly}
+                                                disabled={isReadOnly || isUploading}
                                             />
-                                            <Label htmlFor="media-upload" className={cn("w-full", isReadOnly ? "cursor-not-allowed" : "")}>
-                                                <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", isReadOnly ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
-                                                    <Upload className="h-5 w-5 text-muted-foreground"/>
-                                                    <span className="text-muted-foreground">Sfoglia</span>
+                                            <Label htmlFor="media-upload" className={cn("w-full", (isReadOnly || isUploading) ? "cursor-not-allowed" : "")}>
+                                                <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", (isReadOnly || isUploading) ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
+                                                    {isUploading ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : <Upload className="h-5 w-5 text-muted-foreground"/>}
+                                                    <span className="text-muted-foreground">{isUploading ? 'Caricamento...' : 'Carica sul Cloud'}</span>
                                                 </div>
                                             </Label>
                                         </div>
                                     </FormControl>
-                                    <FormDescription>Locale (limite 5MB)</FormDescription>
+                                    <FormDescription>Il file sarà visibile a tutti gli host</FormDescription>
                                 </FormItem>
                                 <FormField
                                     control={form.control}
@@ -952,7 +943,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                             <FormControl>
                                                 <Input placeholder="https://..." {...field} value={field.value ?? ""} disabled={isReadOnly} />
                                             </FormControl>
-                                            <FormDescription>Consigliato per file grandi</FormDescription>
+                                            <FormDescription>Link diretto a immagine/video/audio</FormDescription>
                                         </FormItem>
                                     )}
                                 />
@@ -1436,7 +1427,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                 onResetLeaderboard={resetLeaderboard}
                 isReadOnly={isReadOnly}
                 />
-               <MediaGallerySidebar mediaItems={mediaGallery} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
+               <MediaGallerySidebar mediaItems={mediaGallery || []} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
             </SidebarContent>
           </Sidebar>
           <SidebarInset className="p-4 sm:p-6 overflow-auto">

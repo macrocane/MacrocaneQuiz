@@ -1,7 +1,7 @@
 'use client';
 
 import ParticipantView from '@/components/quiz/participant-view';
-import { useUser, useAuth } from '@/firebase';
+import { useUser } from '@/firebase';
 import { useRouter } from 'next/navigation';
 import { useEffect, use } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -16,14 +16,12 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
   const router = useRouter();
 
   useEffect(() => {
-    // If not loading and not logged in, redirect to login
     if (!isUserLoading && !user) {
       localStorage.setItem('redirectAfterLogin', `/join/${quizId}`);
       router.push('/login');
     }
   }, [user, isUserLoading, router, quizId]);
 
-  // Show a loader while user and host status are being determined
   if (isUserLoading || isHostLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -33,7 +31,6 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
 
-  // If the user is a host, they can observe the quiz
   if (user && isHost) {
      return (
        <main>
@@ -42,7 +39,6 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
   
-  // If the user is not logged in, they are being redirected, so show a loader.
   if (!user) {
      return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -52,7 +48,6 @@ export default function JoinQuizPage({ params }: { params: { quizId: string } })
     );
   }
 
-  // Only if the user is a valid participant (logged in and not a host), show the participant view.
   return (
     <main>
       <ParticipantView quizId={quizId} />

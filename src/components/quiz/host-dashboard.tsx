@@ -5,40 +5,28 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, FirestoreError, getDocs, DocumentReference, getDoc, increment, deleteDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, getDocs, getDoc, deleteDoc } from 'firebase/firestore';
 import {
-  ArrowRight,
-  ClipboardPlus,
-  Copy,
   LayoutGrid,
-  Link as LinkIcon,
-  ListChecks,
-  Play,
+  Copy,
   Trash2,
-  Trophy,
-  AlertTriangle,
-  Upload,
-  GripVertical,
-  Pencil,
-  Home,
-  SkipForward,
-  Eye,
-  LogOut,
-  Loader2,
-  RefreshCw,
-  Save,
-  Zap,
-  Tags,
   PlusCircle,
+  Loader2,
+  LogOut,
+  Zap,
+  Trophy,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 
-import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia, AppSettings } from "@/lib/types";
+import type { Question, Participant, Answer, Quiz, StoredMedia, AppSettings } from "@/lib/types";
 import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc } from '@/firebase';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+
+import { FileUploaderRegular } from '@uploadcare/react-uploader';
+import '@uploadcare/react-uploader/core.css';
 
 import {
   SidebarProvider,
@@ -62,16 +50,10 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
-  FormMessage,
 } from "@/components/ui/form";
-import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -81,13 +63,11 @@ import {
 } from "@/components/ui/select";
 import ParticipantsSidebar from "@/components/quiz/participants-sidebar";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Label } from "@/components/ui/label";
-import MediaGallerySidebar from "@/components/quiz/media-gallery-sidebar";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
+import MediaGallerySidebar from "@/components/quiz/media-gallery-sidebar";
+
+// Recupera la chiave dalle variabili d'ambiente (sicuro per GitHub/Netlify)
+const UPLOADCARE_PUBLIC_KEY = process.env.NEXT_PUBLIC_UPLOADCARE_PUBLIC_KEY || "demotoken";
 
 const questionSchema = z.object({
   text: z.string().min(10, "La domanda deve contenere almeno 10 caratteri."),
@@ -134,9 +114,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
 
   const quizDocRef = useMemoFirebase(() => quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
-
-  const rankingsColRef = useMemoFirebase(() => collection(firestore, 'monthly_rankings'), [firestore]);
-  const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
 
   const mediaGalleryColRef = useMemoFirebase(() => collection(firestore, 'media_gallery'), [firestore]);
   const { data: mediaGallery } = useCollection<StoredMedia>(mediaGalleryColRef);
@@ -266,7 +243,10 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   }, [quizId, questionsIdentifier, firestore, handleNewAnswer]);
 
   const handleAddExternalMedia = async () => {
-    if (isReadOnly || !newMediaUrl || !newMediaName) return;
+    if (isReadOnly || !newMediaUrl || !newMediaName) {
+      toast({ variant: "destructive", title: "Campi mancanti", description: "Inserisci nome e URL." });
+      return;
+    }
     setIsAddingMedia(true);
     try {
         const mediaId = uuidv4();
@@ -280,7 +260,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         await setDoc(doc(firestore, 'media_gallery', mediaId), mediaData);
         setNewMediaName("");
         setNewMediaUrl("");
-        toast({ title: "Media Aggiunto!", description: "Il link è stato salvato nella galleria condivisa." });
+        toast({ title: "Media Aggiunto!", description: "Il media è ora nella tua galleria." });
     } catch (e) {
         toast({ variant: "destructive", title: "Errore", description: "Impossibile salvare il media." });
     } finally {
@@ -428,7 +408,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
           <Sidebar>
             <SidebarHeader className="p-4"><h2 className="text-lg font-bold font-headline">Sessione</h2></SidebarHeader>
             <SidebarContent>
-              <ParticipantsSidebar participants={participants} leaderboard={leaderboard || []} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
+              <ParticipantsSidebar participants={participants} leaderboard={[]} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
               <MediaGallerySidebar mediaItems={mediaGallery || []} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
             </SidebarContent>
           </Sidebar>
@@ -436,17 +416,37 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
             {quiz.state === 'creating' ? (
                 <div className="max-w-4xl mx-auto space-y-6">
                     <Card>
-                        <CardHeader><CardTitle className="font-headline">Aggiungi Media alla Galleria</CardTitle><CardDescription>Usa Supabase o altri servizi per caricare i file e incolla qui il link.</CardDescription></CardHeader>
-                        <CardContent className="grid gap-4 sm:grid-cols-3">
-                            <Input placeholder="Nome Media" value={newMediaName} onChange={e => setNewMediaName(e.target.value)} disabled={isReadOnly}/>
-                            <Input placeholder="URL (es. https://...)" value={newMediaUrl} onChange={e => setNewMediaUrl(e.target.value)} disabled={isReadOnly}/>
-                            <Select value={newMediaType} onValueChange={v => setNewMediaType(v as any)} disabled={isReadOnly}>
-                                <SelectTrigger><SelectValue/></SelectTrigger>
-                                <SelectContent><SelectItem value="image">Immagine</SelectItem><SelectItem value="video">Video</SelectItem><SelectItem value="audio">Audio</SelectItem></SelectContent>
-                            </Select>
-                            <Button className="sm:col-span-3" onClick={handleAddExternalMedia} disabled={isReadOnly || isAddingMedia}>
-                                {isAddingMedia ? <Loader2 className="animate-spin mr-2"/> : <PlusCircle className="mr-2"/>} Aggiungi alla Galleria
-                            </Button>
+                        <CardHeader><CardTitle className="font-headline">Aggiungi Media alla Galleria</CardTitle><CardDescription>Carica un file o incolla un link esterno (Supabase, Imgur, etc).</CardDescription></CardHeader>
+                        <CardContent className="space-y-4">
+                           <div className="grid gap-4 sm:grid-cols-3">
+                                <Input placeholder="Nome Media (es. Sigla)" value={newMediaName} onChange={e => setNewMediaName(e.target.value)} disabled={isReadOnly}/>
+                                <Input placeholder="URL Media" value={newMediaUrl} onChange={e => setNewMediaUrl(e.target.value)} disabled={isReadOnly}/>
+                                <Select value={newMediaType} onValueChange={v => setNewMediaType(v as any)} disabled={isReadOnly}>
+                                    <SelectTrigger><SelectValue placeholder="Tipo Media"/></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="image">Immagine</SelectItem>
+                                        <SelectItem value="video">Video</SelectItem>
+                                        <SelectItem value="audio">Audio</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-4 items-center">
+                                <div className="w-full sm:w-auto">
+                                  <FileUploaderRegular
+                                      pubkey={UPLOADCARE_PUBLIC_KEY} 
+                                      maxLocalFileCount={1}
+                                      imgOnly={newMediaType === 'image'}
+                                      onFileUploadSuccess={(fileInfo) => {
+                                          setNewMediaUrl(fileInfo.cdnUrl || "");
+                                          if (!newMediaName) setNewMediaName(fileInfo.name || "Nuovo Media");
+                                          toast({ title: "File caricato!", description: "L'URL è stato generato. Clicca 'Salva' per aggiungerlo alla galleria." });
+                                      }}
+                                  />
+                                </div>
+                                <Button className="w-full sm:flex-1" onClick={handleAddExternalMedia} disabled={isReadOnly || isAddingMedia}>
+                                    {isAddingMedia ? <Loader2 className="animate-spin mr-2"/> : <PlusCircle className="mr-2"/>} Salva nella Galleria
+                                </Button>
+                            </div>
                         </CardContent>
                     </Card>
                     <Card>
@@ -468,7 +468,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                             <FormItem>
                                                 <FormLabel>Tipo</FormLabel>
                                                 <Select onValueChange={field.onChange} value={field.value}>
-                                                    <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
+                                                    <FormControl>
+                                                      <SelectTrigger><SelectValue placeholder="Seleziona tipo"/></SelectTrigger>
+                                                    </FormControl>
                                                     <SelectContent>
                                                         <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
                                                         <SelectItem value="open-ended">Aperta</SelectItem>
@@ -485,7 +487,9 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                                 <FormItem>
                                                     <FormLabel>Risposta</FormLabel>
                                                     <Select onValueChange={field.onChange} value={field.value}>
-                                                        <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
+                                                        <FormControl>
+                                                          <SelectTrigger><SelectValue placeholder="Tipo risposta"/></SelectTrigger>
+                                                        </FormControl>
                                                         <SelectContent>
                                                             <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
                                                             <SelectItem value="open-ended">Aperta</SelectItem>
@@ -496,8 +500,15 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                         )}
                                     </div>
                                     <FormField control={form.control} name="text" render={({field}) => <FormItem><FormLabel>Domanda</FormLabel><Textarea {...field}/></FormItem>}/>
-                                    {['image','video','audio'].includes(questionType) && <FormField control={form.control} name="mediaUrl" render={({field}) => <FormItem><FormLabel>URL Media</FormLabel><Input {...field} placeholder="Incolla URL dalla galleria o esterno"/></FormItem>}/>}
-                                    <Button type="submit" variant="secondary" disabled={isReadOnly}>Aggiungi</Button>
+                                    {['image','video','audio'].includes(questionType) && (
+                                        <FormField control={form.control} name="mediaUrl" render={({field}) => (
+                                            <FormItem>
+                                                <FormLabel>URL Media</FormLabel>
+                                                <Input {...field} placeholder="Incolla URL dalla galleria o esterno" className="flex-1" />
+                                            </FormItem>
+                                        )} />
+                                    )}
+                                    <Button type="submit" variant="secondary" disabled={isReadOnly}>Aggiungi Domanda</Button>
                                 </form>
                             </Form>
                             <div className="mt-6 space-y-2">
@@ -528,7 +539,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         <CardContent>
                             {currentQuestion?.mediaUrl && (
                                 <div className="max-w-md mx-auto mb-4">
-                                    {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} className="rounded-lg w-full"/>}
+                                    {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} className="rounded-lg w-full" alt="Domanda"/>}
                                     {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="w-full"/>}
                                     {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full"/>}
                                 </div>
@@ -538,7 +549,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                     const ans = currentAnswers.find(a => a.participantId === p.id);
                                     return (
                                         <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg bg-card shadow-sm">
-                                            <div className="flex items-center gap-3"><img src={p.avatar} className="w-8 h-8 rounded-full"/><span>{p.name}</span></div>
+                                            <div className="flex items-center gap-3"><img src={p.avatar} className="w-8 h-8 rounded-full" alt={p.name}/><span>{p.name}</span></div>
                                             <div className="flex items-center gap-4">
                                                 <span className="text-xs text-muted-foreground">{ans?.answerText || "In attesa..."}</span>
                                                 <div className="flex items-center gap-1">

@@ -4,12 +4,11 @@
 import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import HostDashboard from "@/components/quiz/host-dashboard";
 import { useRouter } from 'next/navigation';
-import { Loader2, Trophy, LogOut, BookText, UserCircle } from 'lucide-react';
+import { Loader2, Trophy, LogOut, BookText, UserCircle, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useHost } from '@/hooks/use-host';
-import { useEffect } from 'react';
 import Link from 'next/link';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
 import type { AppSettings } from '@/lib/types';
 
 export default function Home() {
@@ -23,74 +22,47 @@ export default function Home() {
   const { data: settings, isLoading: isSettingsLoading } = useDoc<AppSettings>(settingsDocRef);
 
   if (isUserLoading || isHostLoading || isSettingsLoading) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
-    );
+    return <div className="flex h-screen w-full items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
   }
   
   if (!user) {
     return (
-     <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center">
-       <h1 className="text-2xl font-bold">Benvenuto a MaestroDiQuiz!</h1>
-       <p className="text-muted-foreground">Accedi per iniziare o registrati per partecipare.</p>
-       <div className="flex gap-4">
-         <Button onClick={() => router.push('/login')}>Accedi</Button>
-         <Button variant="outline" onClick={() => router.push('/register')}>Registrati</Button>
+     <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+       <h1 className="text-4xl font-headline font-bold">MaestroDiQuiz</h1>
+       <p className="text-muted-foreground max-w-sm">Accedi per partecipare ai quiz o gestisci le tue sessioni come host.</p>
+       <div className="flex gap-3 w-full max-w-xs">
+         <Button className="flex-1" onClick={() => router.push('/login')}>Accedi</Button>
+         <Button variant="outline" className="flex-1" onClick={() => router.push('/register')}>Registrati</Button>
        </div>
      </div>
    );
   }
 
-  // If the user is logged in, but not a host, show the participant view.
   if (!isHost) {
      const isLeaderboardVisible = settings?.leaderboardEnabled ?? false;
-
      return (
-      <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-background text-center px-4">
-        <h1 className="text-2xl font-bold">Accesso Partecipante</h1>
-        <p className="text-muted-foreground">Sei loggato come partecipante. Usa un link d'invito per unirti a un quiz o controlla la classifica.</p>
-        <div className="flex flex-wrap justify-center gap-4 max-w-md">
-          <Button 
-            className="w-full sm:w-auto"
-            onClick={() => router.push('/leaderboard')} 
-            disabled={!isLeaderboardVisible}
-            title={!isLeaderboardVisible ? "La classifica è temporaneamente nascosta dall'host." : ""}
-          >
-            <Trophy className="mr-2"/>
-            Vai alla Classifica
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-6 bg-background p-6 text-center">
+        <div className="space-y-2">
+            <h1 className="text-3xl font-headline font-bold">Bentornato!</h1>
+            <p className="text-muted-foreground">Usa un link d'invito per unirti a un quiz in corso.</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md">
+          <Button variant="secondary" className="h-14 gap-2" asChild>
+            <Link href="/leaderboard"><Trophy className="h-5 w-5"/> Classifica {!isLeaderboardVisible && "(Off)"}</Link>
           </Button>
-          <Button variant="secondary" asChild className="w-full sm:w-auto">
-            <Link href="/rules">
-              <BookText className="mr-2"/>
-              Regolamento
-            </Link>
+          <Button variant="secondary" className="h-14 gap-2" asChild>
+            <Link href="/profile"><UserCircle className="h-5 w-5"/> Il Mio Profilo</Link>
           </Button>
-          <Button variant="outline" asChild className="w-full sm:w-auto">
-            <Link href="/profile">
-              <UserCircle className="mr-2"/>
-              Il mio Profilo
-            </Link>
+          <Button variant="outline" className="h-14 gap-2" asChild>
+            <Link href="/rules"><BookText className="h-5 w-5"/> Regolamento</Link>
           </Button>
-          <Button variant="outline" onClick={() => auth.signOut()} className="w-full sm:w-auto">
-            <LogOut className="mr-2"/>
-            Esci
+          <Button variant="destructive" className="h-14 gap-2" onClick={() => auth.signOut()}>
+            <LogOut className="h-5 w-5"/> Esci
           </Button>
         </div>
-        {!isLeaderboardVisible && (
-          <p className="text-[10px] text-muted-foreground italic mt-2">
-            Nota: La classifica mensile viene abilitata periodicamente dall'host.
-          </p>
-        )}
       </div>
     );
   }
   
-  // If the user is a host, they have full permissions.
-  return (
-    <main>
-      <HostDashboard isReadOnly={false} />
-    </main>
-  );
+  return <main><HostDashboard isReadOnly={false} /></main>;
 }

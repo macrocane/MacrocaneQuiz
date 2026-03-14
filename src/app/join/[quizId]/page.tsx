@@ -8,7 +8,6 @@ import { Loader2 } from 'lucide-react';
 import { useHost } from '@/hooks/use-host';
 import HostDashboard from '@/components/quiz/host-dashboard';
 
-
 export default function JoinQuizPage({ params }: { params: { quizId: string } }) {
   const { quizId } = use(params);
   const { user, isUserLoading } = useUser();

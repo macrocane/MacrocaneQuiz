@@ -57,9 +57,8 @@ export type Quiz = {
 export type StoredMedia = {
     id: string;
     name: string;
-    type: string;
+    type: 'image' | 'video' | 'audio';
     url: string;
-    storagePath?: string;
     createdAt: string;
 }
 

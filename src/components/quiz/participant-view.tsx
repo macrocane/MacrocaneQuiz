@@ -2,14 +2,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { doc, onSnapshot, FirestoreError, getDoc, setDoc, collection, query, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, FirestoreError, getDoc, setDoc, collection, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, GripVertical, ArrowUp, ArrowDown, Zap, Info, Tags } from 'lucide-react';
+import { Loader2, Zap, Tags, ArrowUp, ArrowDown } from 'lucide-react';
 import type { Quiz, Participant, Answer, UserProfile, AppSettings, LeaderboardEntry } from '@/lib/types';
 import { useUser, useFirestore, useMemoFirebase, useDoc, useCollection } from '@/firebase';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -19,8 +19,6 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge';
 
 type ParticipantStatus = 'loading' | 'joining' | 'waiting' | 'question' | 'answered' | 'question-results' | 'results';
-
-const STANDARD_SCORE = 0;
 
 export default function ParticipantView({ quizId }: { quizId: string }) {
   const [status, setStatus] = useState<ParticipantStatus>('loading');
@@ -44,7 +42,6 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
   const { data: userRanking } = useDoc<LeaderboardEntry>(userRankingDocRef);
 
   const quizDocRef = useMemoFirebase(() => firestore && quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
-  
   const participantDocRef = useMemoFirebase(() => (firestore && quizId && user) ? doc(firestore, `quizzes/${quizId}/participants`, user.uid) : null, [firestore, quizId, user]);
   const { data: myParticipantData, isLoading: isParticipantLoading } = useDoc<Participant>(participantDocRef);
 
@@ -61,407 +58,141 @@ export default function ParticipantView({ quizId }: { quizId: string }) {
 
   useEffect(() => {
     if (user && quiz?.state === 'lobby' && !myParticipantData && !isParticipantLoading) {
-      
-      const joinQuiz = async () => {
-        try {
-          const userDocRef = doc(firestore, 'users', user.uid);
-          const userDocSnap = await getDoc(userDocRef);
-
-          let userName = user.email?.split('@')[0] || 'Giocatore Misterioso';
-          let userAvatar = PlaceHolderImages[0].imageUrl;
-          let jollyAvailable = true;
-
-          if (userDocSnap.exists()) {
-            const userProfile = userDocSnap.data() as UserProfile;
-            userName = userProfile.nickname;
-            userAvatar = userProfile.icon;
-            jollyAvailable = userProfile.jollyAvailable ?? true;
-          }
-
-          const newParticipant: Participant = {
-            id: user.uid,
-            name: userName,
-            avatar: userAvatar,
-            score: 0,
-            jollyActive: false,
-            jollyAvailable: jollyAvailable,
-          };
-          
-          if(participantDocRef) {
-            await setDoc(participantDocRef, newParticipant);
-          }
-
-        } catch (e) {
-          console.error("Error joining quiz:", e);
-          setError("Impossibile partecipare al quiz. Riprova.");
-        }
+      const join = async () => {
+        const snap = await getDoc(doc(firestore, 'users', user.uid));
+        const profile = snap.data() as UserProfile;
+        const newP: Participant = {
+          id: user.uid,
+          name: profile?.nickname || user.email?.split('@')[0] || "Player",
+          avatar: profile?.icon || PlaceHolderImages[0].imageUrl,
+          score: 0,
+          jollyActive: false,
+          jollyAvailable: profile?.jollyAvailable ?? true,
+        };
+        if(participantDocRef) await setDoc(participantDocRef, newP);
       };
-      
-      joinQuiz();
+      join();
     }
-  }, [user, quiz?.state, myParticipantData, isParticipantLoading, firestore, quizId, participantDocRef]);
+  }, [user, quiz?.state, myParticipantData, isParticipantLoading, firestore, participantDocRef]);
 
   useEffect(() => {
     if (!quizDocRef) return;
-
-    const unsubscribe = onSnapshot(quizDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const quizData = docSnap.data() as Quiz;
-            const prevQuizState = quiz?.state;
-            setQuiz(quizData);
-
-            if (myParticipantData) {
-                const currentQuestionFromHost = quizData.questions?.[quizData.currentQuestionIndex];
-                
-                if (quizData.state === 'live' && currentQuestionFromHost) {
-                    if (status === 'answered' && prevQuizState === 'live') {
-                    } else if (quiz?.currentQuestionIndex !== quizData.currentQuestionIndex || prevQuizState !== 'live') {
-                        setAnswer('');
-                        setReorderAnswers(currentQuestionFromHost.options ? [...currentQuestionFromHost.options].sort(() => Math.random() - 0.5) : []);
-                        setStartTime(Date.now());
-                        setStatus('question');
-                    }
-                } else if (quizData.state === 'question-results') {
-                    setStatus('question-results');
-                } else if (quizData.state === 'results') {
-                    setStatus('results');
-                } else if (quizData.state === 'lobby') {
-                    setStatus('waiting');
+    const unsub = onSnapshot(quizDocRef, (snap) => {
+        if (!snap.exists()) return setError("Quiz non trovato.");
+        const data = snap.data() as Quiz;
+        const prev = quiz?.state;
+        setQuiz(data);
+        if (myParticipantData) {
+            if (data.state === 'live') {
+                if (status !== 'answered' || quiz?.currentQuestionIndex !== data.currentQuestionIndex) {
+                    setAnswer('');
+                    setReorderAnswers(data.questions[data.currentQuestionIndex].options ? [...data.questions[data.currentQuestionIndex].options].sort(() => Math.random() - 0.5) : []);
+                    setStartTime(Date.now());
+                    setStatus('question');
                 }
-            } else if (quizData.state === 'lobby') {
-                 setStatus('joining');
-            }
-
-        } else {
-            setError("Quiz non trovato. Controlla il link e riprova.");
-        }
-    }, (err: FirestoreError) => {
-        console.error("Firestore snapshot error on participant view:", err);
-        setError("Si è verificato un errore nel caricamento del quiz.");
+            } else if (data.state === 'question-results') setStatus('question-results');
+            else if (data.state === 'results') setStatus('results');
+            else setStatus('waiting');
+        } else if (data.state === 'lobby') setStatus('joining');
     });
-
-    return () => unsubscribe();
-  }, [quizDocRef, myParticipantData, quiz?.currentQuestionIndex, quiz?.state, status]);
-  
-  const handleActivateJolly = async () => {
-    if (!user || !participantDocRef || !firestore || !myParticipantData?.jollyAvailable || !isEligibleForJolly) return;
-    setIsActivatingJolly(true);
-    try {
-        const batch = writeBatch(firestore);
-        const userDocRef = doc(firestore, 'users', user.uid);
-        
-        batch.update(userDocRef, { jollyAvailable: false });
-        batch.update(participantDocRef, { jollyActive: true, jollyAvailable: false });
-        
-        await batch.commit();
-    } catch (e) {
-        console.error("Error activating Jolly:", e);
-    } finally {
-        setIsActivatingJolly(false);
-    }
-  };
+    return () => unsub();
+  }, [quizDocRef, myParticipantData, status, quiz?.currentQuestionIndex]);
 
   const handleSubmit = () => {
-    if (!startTime || !quiz || !myParticipantData || !firestore || !quiz.questions) return;
-
-    const currentQuestion = quiz.questions[quiz.currentQuestionIndex];
-    if (!currentQuestion) return;
-    
-    const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
-    
-    let calculatedScore = 0;
-    if (needsMultipleChoice) {
-      if (answer === currentQuestion.correctAnswer) {
-        calculatedScore = STANDARD_SCORE;
-      }
-    } else if (currentQuestion.type === 'reorder') {
-        const isCorrect = JSON.stringify(reorderAnswers) === JSON.stringify(currentQuestion.correctOrder);
-        if (isCorrect) {
-            calculatedScore = STANDARD_SCORE;
-        }
-    }
-
+    if (!startTime || !currentQuestion || !myParticipantData) return;
     const responseTime = (Date.now() - startTime) / 1000;
-    
-    const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, myParticipantData.id);
-
-    const answerPayload: Omit<Answer, 'isCheating' | 'cheatingReason'> = {
+    const ref = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, myParticipantData.id);
+    const payload: Partial<Answer> = {
         participantId: myParticipantData.id,
         questionId: currentQuestion.id,
         responseTime: parseFloat(responseTime.toFixed(3)),
         answerText: currentQuestion.type === 'reorder' ? `Ordine: ${reorderAnswers.join(', ')}` : answer,
-        score: calculatedScore,
+        score: 0, // L'host assegna i punti manualmente
         ...(currentQuestion.type === 'reorder' && { answerOrder: reorderAnswers }),
     };
-
-    setDocumentNonBlocking(answerRef, answerPayload, { merge: true });
-    
+    setDocumentNonBlocking(ref, payload, { merge: true });
     setStatus('answered');
-  }
-
- const handleReorder = (index: number, direction: 'up' | 'down') => {
-    const newOrder = [...reorderAnswers];
-    if (direction === 'up' && index > 0) {
-      [newOrder[index], newOrder[index - 1]] = [newOrder[index - 1], newOrder[index]];
-    } else if (direction === 'down' && index < newOrder.length - 1) {
-      [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
-    }
-    setReorderAnswers(newOrder);
   };
-  
-  const finalScore = myParticipantData?.score ?? 0;
 
-  const renderContent = () => {
-    if (status === 'loading' || (isParticipantLoading && status !== 'joining')) {
-        return (
-             <div className="flex flex-col items-center gap-4 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">Caricamento quiz...</p>
-            </div>
-        );
-    }
-     if (status === 'joining') {
-        return (
-             <div className="flex flex-col items-center gap-4 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">Unendoti al quiz...</p>
-            </div>
-        );
-    }
-
-    if (error) {
-        return (
-            <div className="flex flex-col items-center gap-4 text-center">
-                <Alert variant="destructive">
-                    <AlertTitle>Errore</AlertTitle>
-                    <AlertDescription>{error}</AlertDescription>
-                </Alert>
-                 <Button onClick={() => window.location.reload()}>Riprova</Button>
-            </div>
-        )
-    }
-
-    switch (status) {
-      case 'waiting':
-      case 'answered':
-      case 'question-results':
-        const waitingMessage = () => {
-            if (!quiz) return "Caricamento quiz...";
-            if (status === 'answered') return 'Risposta inviata! In attesa della prossima domanda o dei risultati...';
-            if (status === 'question-results') return 'Tempo scaduto! In attesa dei risultati...';
-            if (quiz.state === 'lobby') return "Sei nella lobby! In attesa che l'host inizi il quiz...";
-            return 'In attesa della prossima domanda...';
-        };
-        const myAnswer = status === 'question-results' && currentQuestion && myParticipantData ? currentQuestionAnswers?.find(a => a.participantId === myParticipantData.id) : undefined;
-        
-        if (status === 'question-results' && currentQuestion) {
-             return (
-                 <div className="space-y-6">
-                    <h2 className="text-2xl font-bold">{currentQuestion.text}</h2>
-                    {currentQuestion.correctAnswer && (
-                        <Alert variant={myAnswer?.answerText === currentQuestion.correctAnswer ? 'default' : 'destructive'} className={myAnswer?.answerText === currentQuestion.correctAnswer ? "bg-green-100 border-green-300 text-green-800" : ""}>
-                            <AlertTitle>La risposta corretta è: {currentQuestion.correctAnswer}</AlertTitle>
-                        </Alert>
-                    )}
-                     {currentQuestion.type === 'reorder' && currentQuestion.correctOrder && (
-                        <Alert>
-                            <AlertTitle>L'ordine corretto è: {currentQuestion.correctOrder.join(", ")}</AlertTitle>
-                        </Alert>
-                    )}
-                    
-                    <h3 className="text-lg font-semibold">Risposte degli altri:</h3>
-                    <div className="space-y-2">
-                        {allParticipants && allParticipants.map(p => {
-                            const pAnswer = currentQuestionAnswers?.find(a => a.participantId === p.id);
-                            return (
-                                <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg">
-                                    <div className="flex items-center gap-3">
-                                        <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
-                                        <div>
-                                            <p className="font-medium">{p.name}</p>
-                                            <p className="text-sm text-muted-foreground">{pAnswer ? (pAnswer.answerOrder ? pAnswer.answerOrder.join(', ') : pAnswer.answerText) : 'Nessuna risposta'}</p>
-                                        </div>
-                                    </div>
-                                    {pAnswer && <span className="text-sm font-mono">{pAnswer.responseTime.toFixed(3)}s</span>}
-                                </div>
-                            )
-                        })}
-                    </div>
-                     <div className="flex flex-col items-center gap-4 text-center pt-4">
-                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        <p className="text-muted-foreground">In attesa della prossima domanda...</p>
-                    </div>
-                </div>
-            );
-        }
-
-        return (
-          <div className="flex flex-col items-center gap-6 text-center">
-            {quiz?.state === 'lobby' && quiz.topics && quiz.topics.some(t => t !== "") && (
-              <Card className="w-full bg-accent/5 border-accent/20">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-bold uppercase tracking-widest flex items-center justify-center gap-2">
-                    <Tags className="h-4 w-4" /> Temi della serata
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-wrap justify-center gap-2 pb-4">
-                  {quiz.topics.filter(t => t !== "").map((topic, idx) => (
-                    <Badge key={idx} variant="outline" className="bg-background/50 px-3 py-1 text-sm">{topic}</Badge>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
-
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-muted-foreground">{waitingMessage()}</p>
-             {myParticipantData && (
-                <div className="flex flex-col items-center gap-4">
-                    <div className="flex items-center gap-3 rounded-full bg-muted p-2">
-                        <Image src={myParticipantData.avatar} alt={myParticipantData.name} width={32} height={32} className="w-8 h-8 rounded-full" />
-                        <span className="font-medium text-sm">{myParticipantData.name}</span>
-                        {myParticipantData.jollyActive && <Zap className="h-4 w-4 text-yellow-500 fill-yellow-500" />}
-                    </div>
-                    
-                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && isEligibleForJolly && (
-                        <div className="space-y-3">
-                            <p className="text-xs text-primary font-bold animate-pulse">
-                                Hai sbloccato un potenziale vantaggio per stasera! Scoprilo cliccando il tasto qui sotto.
-                            </p>
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button variant="secondary" className="gap-2" disabled={isActivatingJolly}>
-                                        <Zap className="h-4 w-4" /> Gioca Jolly
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                        <AlertDialogTitle>Vuoi attivare il tuo Jolly?</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                            Attivando il Jolly per questa serata, **raddoppierai il tuo punteggio finale** accumulato nel quiz corrente.
-                                            <br /><br />
-                                            È un vantaggio unico e limitato. Una volta confermato, non potrai più tornare indietro per questa serata e il gettone mensile verrà consumato.
-                                        </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel>Annulla</AlertDialogCancel>
-                                        <AlertDialogAction onClick={handleActivateJolly}>Conferma e Raddoppia</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
-                        </div>
-                    )}
-
-                    {quiz?.state === 'lobby' && myParticipantData.jollyAvailable && settings?.jollyEnabled && !isEligibleForJolly && (
-                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-2 max-w-xs italic border p-2 rounded-md">
-                            <Info className="h-3 w-3 shrink-0" />
-                            <span>La funzione Jolly è soggetta a parametri di bilanciamento dinamico e non è attualmente disponibile per il tuo profilo in questa sessione.</span>
-                        </div>
-                    )}
-                    
-                    {myParticipantData.jollyActive && quiz?.state === 'lobby' && (
-                         <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50 gap-1 p-2">
-                            <Zap className="h-3 w-3 fill-yellow-600" /> Jolly Attivato! Il tuo punteggio finale sarà raddoppiato.
-                        </Badge>
-                    )}
-                </div>
-            )}
-          </div>
-        );
-      case 'question':
-        if (!currentQuestion) return (
-            <div className="flex flex-col items-center gap-4">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">Caricamento domanda...</p>
-            </div>
-        );
-        const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
-        const needsOpenEnded = currentQuestion.type === 'open-ended' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'open-ended');
-
-        return (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold">{currentQuestion.text}</h2>
-                {myParticipantData?.jollyActive && <Zap className="h-6 w-6 text-yellow-500 fill-yellow-500 animate-pulse" title="Jolly Attivo" />}
-            </div>
-
-            {currentQuestion.mediaUrl && ['image', 'video', 'audio'].includes(currentQuestion.type) && (
-                <div className="w-full max-w-md mx-auto aspect-video relative bg-muted rounded-lg">
-                    {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} alt="Contenuto della domanda" className="rounded-lg object-contain w-full h-full" />}
-                    {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="rounded-lg object-contain w-full h-full" />}
-                    {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full p-4" />}
-                </div>
-            )}
-
-            {needsMultipleChoice && currentQuestion.options && (
-                <RadioGroup value={answer} onValueChange={setAnswer} className="space-y-2">
-                    {currentQuestion.options.map((opt, i) => (
-                        <div key={i} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted border border-transparent hover:border-border cursor-pointer">
-                            <RadioGroupItem value={opt} id={`opt-${i}`} />
-                            <Label htmlFor={`opt-${i}`} className="text-lg cursor-pointer flex-1">{opt}</Label>
-                        </div>
-                    ))}
-                </RadioGroup>
-            )}
-            {needsOpenEnded && (
-                <Textarea 
-                    placeholder="La tua risposta..." 
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    rows={4}
-                />
-            )}
-             {currentQuestion.type === 'reorder' && (
-                <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Usa i pulsanti per riordinare gli elementi.</p>
-                    {reorderAnswers.map((item, index) => (
-                        <div key={item} className="flex items-center gap-2 p-3 border rounded-md bg-background justify-between">
-                           <span className="flex items-center gap-2">
-                             <GripVertical className="h-5 w-5 text-muted-foreground"/>
-                             {item}
-                           </span>
-                           <div className="flex gap-1">
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleReorder(index, 'up')} disabled={index === 0}>
-                                    <ArrowUp className="h-4 w-4" />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleReorder(index, 'down')} disabled={index === reorderAnswers.length - 1}>
-                                    <ArrowDown className="h-4 w-4" />
-                                </Button>
-                           </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-            <Button onClick={handleSubmit} className="w-full" size="lg" disabled={currentQuestion.type === 'reorder' ? false : !answer}>Invia Risposta</Button>
-          </div>
-        );
-        case 'results':
-            return (
-                <div className="flex flex-col items-center gap-4 text-center">
-                    <h2 className="text-2xl font-bold">Quiz Terminato!</h2>
-                    <p className="text-muted-foreground">Grazie per aver partecipato. I risultati sono stati mostrati dall'host.</p>
-                    {myParticipantData && (
-                        <div className="flex flex-col items-center gap-2">
-                            <p className="text-lg font-semibold">Il tuo punteggio finale: {finalScore} punti</p>
-                            {myParticipantData.jollyActive && <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 border-yellow-200">Bonus Jolly Applicato!</Badge>}
-                        </div>
-                    )}
-                     <Button onClick={() => {
-                        window.location.href = '/';
-                     }}>Torna alla Home</Button>
-                </div>
-            );
-    }
+  const handleActivateJolly = async () => {
+    if (!user || !participantDocRef || isActivatingJolly) return;
+    setIsActivatingJolly(true);
+    const batch = writeBatch(firestore);
+    batch.update(doc(firestore, 'users', user.uid), { jollyAvailable: false });
+    batch.update(participantDocRef, { jollyActive: true, jollyAvailable: false });
+    await batch.commit();
+    setIsActivatingJolly(false);
   };
+
+  const handleReorder = (idx: number, dir: 'up'|'down') => {
+    const next = [...reorderAnswers];
+    if (dir === 'up' && idx > 0) [next[idx], next[idx-1]] = [next[idx-1], next[idx]];
+    else if (dir === 'down' && idx < next.length-1) [next[idx], next[idx+1]] = [next[idx+1], next[idx]];
+    setReorderAnswers(next);
+  };
+
+  if (status === 'loading' || error) return <div className="flex flex-col items-center justify-center min-h-screen text-center p-4"><p>{error || "Caricamento..."}</p></div>;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-2xl">
         <CardHeader className="text-center">
-          <CardTitle className="font-headline text-3xl">{quiz?.name || 'Benvenuto al Quiz!'}</CardTitle>
-          {quizId && <CardDescription>ID Quiz: {quizId}</CardDescription>}
+            <CardTitle className="text-3xl font-headline">{quiz?.name}</CardTitle>
+            <div className="flex justify-center gap-2 mt-2">
+                <Badge variant="secondary">{status.replace('-',' ').toUpperCase()}</Badge>
+                {myParticipantData?.jollyActive && <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200"><Zap className="h-3 w-3 mr-1 fill-yellow-800"/> JOLLY ATTIVO</Badge>}
+            </div>
         </CardHeader>
         <CardContent>
-            {renderContent()}
+            {status === 'waiting' || status === 'answered' ? (
+                <div className="text-center space-y-6">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary"/>
+                    <p className="text-muted-foreground">{status === 'answered' ? "Risposta inviata! In attesa dell'host..." : "In attesa dell'inizio..."}</p>
+                    {quiz?.state === 'lobby' && settings?.jollyEnabled && myParticipantData?.jollyAvailable && isEligibleForJolly && (
+                        <Button variant="secondary" onClick={handleActivateJolly} disabled={isActivatingJolly}>Gioca Jolly (Raddoppia Punteggio Finale)</Button>
+                    )}
+                </div>
+            ) : status === 'question' && currentQuestion ? (
+                <div className="space-y-6">
+                    <h2 className="text-2xl font-bold">{currentQuestion.text}</h2>
+                    {currentQuestion.mediaUrl && (
+                        <div className="max-w-md mx-auto aspect-video rounded-lg overflow-hidden bg-muted">
+                            {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} className="w-full h-full object-contain"/>}
+                            {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="w-full h-full"/>}
+                            {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full p-4"/>}
+                        </div>
+                    )}
+                    {currentQuestion.type === 'reorder' ? (
+                        <div className="space-y-2">
+                            {reorderAnswers.map((item, i) => (
+                                <div key={item} className="flex items-center justify-between p-3 border rounded-lg bg-card shadow-sm">
+                                    <span>{item}</span>
+                                    <div className="flex gap-1"><Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleReorder(i, 'up')} disabled={i===0}><ArrowUp className="h-4 w-4"/></Button><Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleReorder(i, 'down')} disabled={i===reorderAnswers.length-1}><ArrowDown className="h-4 w-4"/></Button></div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : currentQuestion.type === 'multiple-choice' || currentQuestion.answerType === 'multiple-choice' ? (
+                        <RadioGroup value={answer} onValueChange={setAnswer} className="space-y-2">
+                            {currentQuestion.options?.map(o => <div key={o} className="flex items-center space-x-2 p-3 rounded-lg border hover:bg-muted cursor-pointer"><RadioGroupItem value={o} id={o}/><Label htmlFor={o} className="flex-1 cursor-pointer">{o}</Label></div>)}
+                        </RadioGroup>
+                    ) : (
+                        <Textarea placeholder="Scrivi la tua risposta..." value={answer} onChange={e => setAnswer(e.target.value)} rows={4}/>
+                    )}
+                    <Button className="w-full" size="lg" onClick={handleSubmit} disabled={!answer && currentQuestion.type !== 'reorder'}>Invia</Button>
+                </div>
+            ) : status === 'question-results' ? (
+                <div className="space-y-4 text-center">
+                    <h3 className="text-xl font-bold">Tempo Scaduto!</h3>
+                    {currentQuestion?.correctAnswer && <div className="p-4 bg-green-50 border border-green-200 rounded-lg"><p className="text-sm text-green-800 uppercase font-bold">Risposta Corretta</p><p className="text-2xl font-bold text-green-900">{currentQuestion.correctAnswer}</p></div>}
+                    <p className="text-muted-foreground italic">In attesa dell'host per la prossima domanda...</p>
+                </div>
+            ) : status === 'results' ? (
+                <div className="text-center space-y-4">
+                    <h2 className="text-3xl font-bold">Fine!</h2>
+                    <p className="text-xl">Punteggio: <span className="font-bold">{myParticipantData?.score}</span> pti</p>
+                    <Button onClick={() => window.location.href='/'}>Torna alla Home</Button>
+                </div>
+            ) : null}
         </CardContent>
       </Card>
     </div>

@@ -381,195 +381,693 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   if (!quiz) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
   const currentAnswers = answers.filter(a => a.questionId === currentQuestion?.id) || [];
 
+
+  const renderContent = () => {
+    switch (quiz.state) {
+      case "creating":
+        const showOptions = questionType === "multiple-choice" || (['image', 'video', 'audio'].includes(questionType) && answerType === 'multiple-choice');
+        const showReorderOptions = questionType === 'reorder';
+        const showOpenEndedCorrectAnswer = questionType === 'open-ended' || (['image', 'video', 'audio'].includes(questionType) && answerType === 'open-ended');
+
+        return (
+          <div className="space-y-6">
+            {isReadOnly && (
+                <Alert variant="default" className="bg-yellow-50 border-yellow-200 text-yellow-800">
+                    <AlertTriangle className="h-4 w-4 !text-yellow-800" />
+                    <AlertTitle>Modalità Sola Lettura</AlertTitle>
+                    <AlertDescription>
+                        Stai visualizzando come Co-Host. Non puoi modificare il quiz.
+                    </AlertDescription>
+                </Alert>
+            )}
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-headline flex items-center gap-2">
+                  <Pencil size={24} /> Dettagli del Quiz
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                    <Label htmlFor="quiz-name">Nome del Quiz</Label>
+                    <Input
+                        id="quiz-name"
+                        value={quiz.name}
+                        onChange={(e) => setQuiz(prev => prev ? ({ ...prev, name: e.target.value }) : null)}
+                        placeholder="Es. Quiz di Cultura Generale"
+                        disabled={isReadOnly}
+                    />
+                </div>
+                <div className="space-y-3">
+                   <Label className="flex items-center gap-2">
+                     <Tags className="h-4 w-4" /> Temi della Serata (3 argomenti)
+                   </Label>
+                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {topics.map((topic, idx) => (
+                        <Input 
+                          key={idx}
+                          placeholder={`Tema ${idx + 1}`}
+                          value={topic}
+                          onChange={(e) => {
+                            const newTopics = [...topics];
+                            newTopics[idx] = e.target.value;
+                            setTopics(newTopics);
+                          }}
+                          disabled={isReadOnly}
+                        />
+                      ))}
+                   </div>
+                   <p className="text-[10px] text-muted-foreground">Questi temi verranno mostrati ai partecipanti nella lobby.</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-headline flex items-center gap-2">
+                  <ClipboardPlus size={24} /> Crea una Nuova Domanda
+                </CardTitle>
+                <CardDescription>
+                  Aggiungi domande al tuo quiz. Puoi scegliere tra vari formati.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    <fieldset disabled={isReadOnly}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                                control={form.control}
+                                name="type"
+                                render={({ field }) => (
+                                    <FormItem>
+                                    <FormLabel>Tipo di Domanda</FormLabel>
+                                    <Select 
+                                        onValueChange={(value) => {
+                                            field.onChange(value);
+                                            if (value === 'multiple-choice' || value === 'reorder') {
+                                                form.setValue('answerType', undefined);
+                                            } else if (value === 'open-ended') {
+                                                form.setValue('answerType', undefined);
+                                                form.setValue('options', []);
+                                            } else {
+                                                form.setValue('answerType', 'multiple-choice');
+                                            }
+                                        }}
+                                        value={field.value}
+                                        disabled={isReadOnly}
+                                    >
+                                        <FormControl>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Seleziona un tipo di domanda" />
+                                        </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
+                                            <SelectItem value="open-ended">Risposta Aperta</SelectItem>
+                                            <SelectItem value="image">Basata su Immagine</SelectItem>
+                                            <SelectItem value="video">Basata su Video</SelectItem>
+                                            <SelectItem value="audio">Basata su Audio</SelectItem>
+                                            <SelectItem value="reorder">Riordina le risposte</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                            {['image', 'video', 'audio'].includes(questionType) && (
+                                <FormField
+                                control={form.control}
+                                name="answerType"
+                                render={({ field }) => (
+                                    <FormItem>
+                                    <FormLabel>Tipo di Risposta</FormLabel>
+                                    <Select 
+                                        onValueChange={(value) => {
+                                            field.onChange(value);
+                                            if (value === 'open-ended') {
+                                                form.setValue('options', []);
+                                            }
+                                        }}
+                                        value={field.value}
+                                        disabled={isReadOnly}
+                                    >
+                                        <FormControl>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Seleziona un tipo di risposta" />
+                                        </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                        <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
+                                        <SelectItem value="open-ended">Risposta Aperta</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                    </FormItem>
+                                )}
+                                />
+                            )}
+                        </div>
+                        
+                        <FormField
+                        control={form.control}
+                        name="text"
+                        render={({ field }) => (
+                            <FormItem className="mt-6">
+                            <FormLabel>Testo della Domanda</FormLabel>
+                            <FormControl>
+                                <Textarea placeholder="es. Qual è la capitale della Francia?" {...field} disabled={isReadOnly} />
+                            </FormControl>
+                            <FormMessage />
+                            </FormItem>
+                        )}
+                        />
+
+                        {['image', 'video', 'audio'].includes(questionType) && (
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                                <FormItem>
+                                    <FormLabel>Carica File</FormLabel>
+                                    <FormControl>
+                                        <div>
+                                            <input 
+                                                id="media-upload"
+                                                type="file"
+                                                accept="image/*,video/*,audio/*"
+                                                className="sr-only"
+                                                onChange={(e) => {
+                                                    if (e.target.files && e.target.files[0]) {
+                                                        handleFileUpload(e.target.files[0]);
+                                                    }
+                                                }}
+                                                disabled={isReadOnly}
+                                            />
+                                            <Label htmlFor="media-upload" className={cn("w-full", isReadOnly ? "cursor-not-allowed" : "")}>
+                                                <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", isReadOnly ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
+                                                    <Upload className="h-5 w-5 text-muted-foreground"/>
+                                                    <span className="text-muted-foreground">Sfoglia</span>
+                                                </div>
+                                            </Label>
+                                        </div>
+                                    </FormControl>
+                                    <FormDescription>Locale (limite 5MB)</FormDescription>
+                                </FormItem>
+                                <FormField
+                                    control={form.control}
+                                    name="mediaUrl"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Oppure URL Esterno</FormLabel>
+                                            <FormControl>
+                                                <Input placeholder="https://..." {...field} value={field.value ?? ""} disabled={isReadOnly} />
+                                            </FormControl>
+                                            <FormDescription>Consigliato per file grandi</FormDescription>
+                                        </FormItem>
+                                    )}
+                                />
+                             </div>
+                        )}
+
+                        {showOptions && (
+                        <FormField
+                            control={form.control}
+                            name="correctAnswer"
+                            render={({ field }) => (
+                            <FormItem className="space-y-3 mt-6">
+                                <FormLabel>Opzioni (seleziona la risposta corretta)</FormLabel>
+                                <RadioGroup
+                                onValueChange={field.onChange}
+                                value={field.value}
+                                className="space-y-2"
+                                disabled={isReadOnly}
+                                >
+                                {fields.map((item, index) => (
+                                    <FormField
+                                    key={item.id}
+                                    control={form.control}
+                                    name={`options.${index}.value`}
+                                    render={({ field: optionField }) => (
+                                        <FormItem className="flex items-center gap-2">
+                                        <FormControl>
+                                            <RadioGroupItem value={index.toString()} id={`options.${index}`} disabled={isReadOnly} />
+                                        </FormControl>
+                                        <Input placeholder={`Opzione ${index + 1}`} {...optionField} disabled={isReadOnly} />
+                                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isReadOnly}>
+                                            <Trash2 className="h-4 w-4"/>
+                                        </Button>
+                                        </FormItem>
+                                    )}
+                                    />
+                                ))}
+                                </RadioGroup>
+                                <Button type="button" variant="outline" size="sm" onClick={() => append({ value: "" })} disabled={isReadOnly}>
+                                    Aggiungi opzione
+                                </Button>
+                                <FormMessage />
+                            </FormItem>
+                            )}
+                        />
+                        )}
+
+                        {showReorderOptions && (
+                            <div className="space-y-3 mt-6">
+                                <FormLabel>Opzioni da riordinare (nell'ordine corretto)</FormLabel>
+                                <div className="space-y-2">
+                                {fields.map((item, index) => (
+                                    <FormField
+                                    key={item.id}
+                                    control={form.control}
+                                    name={`options.${index}.value`}
+                                    render={({ field }) => (
+                                        <FormItem className="flex items-center gap-2">
+                                        <GripVertical className="h-5 w-5 text-muted-foreground cursor-grab"/>
+                                        <FormControl>
+                                            <Input placeholder={`Elemento ${index + 1}`} {...field} disabled={isReadOnly} />
+                                        </FormControl>
+                                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isReadOnly}>
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                        </FormItem>
+                                    )}
+                                    />
+                                ))}
+                                </div>
+                                <Button type="button" variant="outline" size="sm" onClick={() => append({ value: "" })} disabled={isReadOnly}>
+                                    Aggiungi opzione
+                                </Button>
+                                <FormDescription>
+                                    L'ordine in cui li lasci sarà considerato quello corretto.
+                                </FormDescription>
+                            </div>
+                        )}
+                        
+                        {showOpenEndedCorrectAnswer && (
+                             <FormField
+                                control={form.control}
+                                name="correctAnswer"
+                                render={({ field }) => (
+                                    <FormItem className="mt-6">
+                                    <FormLabel>Risposta corretta (opzionale)</FormLabel>
+                                    <FormControl>
+                                        <Input placeholder="Inserisci la risposta di riferimento" {...field} value={field.value ?? ""} disabled={isReadOnly} />
+                                    </FormControl>
+                                     <FormDescription>
+                                        Questa risposta verrà mostrata ai partecipanti dopo la domanda.
+                                    </FormDescription>
+                                    <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        )}
+
+                        <Button type="submit" variant="secondary" className="mt-6" disabled={isReadOnly}>Aggiungi Domanda</Button>
+                    </fieldset>
+                  </form>
+                </Form>
+              </CardContent>
+            </Card>
+
+            {quiz.questions && quiz.questions.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="font-headline flex items-center gap-2"><ListChecks size={24}/> Domande del Quiz</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {quiz.questions.map((q, i) => (
+                    <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border">
+                      <p className="font-medium">{i + 1}. {q.text}</p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{getQuestionTypeLabel(q)}</Badge>
+                        <Button variant="ghost" size="icon" onClick={() => deleteQuestion(q.id)} disabled={isReadOnly}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+                <CardFooter>
+                  <Button onClick={startQuiz} className="w-full" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={quiz.questions.length === 0 || isReadOnly}>
+                    Crea Lobby del Quiz <ArrowRight className="ml-2" />
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
+          </div>
+        );
+      case "lobby":
+        return (
+          <Card className="text-center">
+            <CardHeader>
+              <CardTitle className="font-headline text-3xl">Lobby del Quiz</CardTitle>
+              <CardDescription>Condividi il link qui sotto per invitare i partecipanti. Il quiz inizierà quando sarai pronto.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {quiz.topics && quiz.topics.some(t => t !== "") && (
+                <div className="p-4 rounded-lg bg-accent/10 border border-accent/20">
+                  <h3 className="text-sm font-bold uppercase tracking-wider mb-2 flex items-center justify-center gap-2">
+                    <Tags className="h-4 w-4" /> Temi della serata
+                  </h3>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {quiz.topics.filter(t => t !== "").map((t, idx) => (
+                      <Badge key={idx} variant="secondary">{t}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-center gap-2 p-4 rounded-lg bg-muted border border-dashed">
+                <LinkIcon className="h-5 w-5 text-muted-foreground"/>
+                <span className="text-lg font-mono tracking-wider">{inviteLink}</span>
+                <Button variant="ghost" size="icon" onClick={copyToClipboard}><Copy className="h-5 w-5"/></Button>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Partecipanti ({participants.length})</h3>
+                <div className="flex justify-center gap-4 flex-wrap">
+                   {participants.length > 0 ? participants.map(p => (
+                    <div key={p.id} className="flex flex-col items-center gap-1">
+                      <div className="relative">
+                        <img src={p.avatar} alt={p.name} className="w-12 h-12 rounded-full"/>
+                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-5 w-5 text-yellow-500 fill-yellow-500" />}
+                      </div>
+                      <span className="text-sm font-medium">{p.name}</span>
+                    </div>
+                  )) : (
+                      <p className="text-sm text-muted-foreground">In attesa che i partecipanti si uniscano...</p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col sm:flex-row gap-2">
+               <Button onClick={resetQuiz} variant="outline" className="w-full sm:w-auto" disabled={isReadOnly}>
+                <Home className="mr-2 h-4 w-4" />
+                Home
+              </Button>
+              <Button onClick={beginQuiz} className="w-full" size="lg" disabled={participants.length === 0 || isReadOnly}>
+                Inizia il Quiz per {participants.length} partecipanti <Play className="ml-2"/>
+              </Button>
+            </CardFooter>
+          </Card>
+        );
+      case "live":
+      case "question-results":
+        if (!quiz.questions) return null;
+        const progress = ((quiz.currentQuestionIndex + 1) / quiz.questions.length) * 100;
+        const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
+        return (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <CardTitle className="font-headline text-3xl mb-2">{currentQuestion.text}</CardTitle>
+                    <CardDescription>{getQuestionTypeLabel(currentQuestion)}</CardDescription>
+                  </div>
+                  <Badge variant="secondary" className="text-lg">
+                    Domanda {quiz.currentQuestionIndex + 1} / {quiz.questions.length}
+                  </Badge>
+                </div>
+              </CardHeader>
+               <CardContent className="space-y-4">
+                {currentQuestion.mediaUrl && ['image', 'video', 'audio'].includes(currentQuestion.type) && (
+                    <div className="w-full max-w-md mx-auto aspect-video relative bg-muted rounded-lg">
+                        {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} alt="Contenuto della domanda" className="rounded-lg object-contain w-full h-full" />}
+                        {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="rounded-lg object-contain w-full h-full" />}
+                        {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full p-4" />}
+                    </div>
+                )}
+                {needsMultipleChoice && (
+                  <div className="grid grid-cols-2 gap-4">
+                    {currentQuestion.options?.map((opt, i) => (
+                      <div key={i} className={cn(
+                        "p-4 border rounded-lg text-center font-medium",
+                        quiz.state === 'question-results' && opt === currentQuestion.correctAnswer ? "bg-green-100 border-green-300 text-green-800" : "bg-background"
+                      )}>
+                        {opt}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {currentQuestion.type === 'reorder' && (
+                    <Alert>
+                        <GripVertical className="h-4 w-4" />
+                        <AlertTitle>Domanda di Riordino</AlertTitle>
+                        <AlertDescription>
+                            I partecipanti devono riordinare un elenco di elementi. Le risposte verranno mostrate di seguito. {quiz.state === 'question-results' && `L'ordine corretto è: ${currentQuestion.correctOrder?.join(', ')}`}
+                        </AlertDescription>
+                    </Alert>
+                )}
+              </CardContent>
+               <CardFooter>
+                <Progress value={progress} className="w-full" />
+              </CardFooter>
+            </Card>
+
+             <Card>
+              <CardHeader>
+                <CardTitle className="font-headline">Risposte in Diretta ({currentAnswers.length}/{participants.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {participants.map(p => {
+                  const answer = currentAnswers.find(a => a.participantId === p.id);
+                  if (!answer) {
+                    return (
+                      <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <div className="relative">
+                            <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                            {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
+                          </div>
+                          <span className="font-medium">{p.name}</span>
+                        </div>
+                        <span className="text-sm text-muted-foreground">In attesa di risposta...</span>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                           <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
+                           {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
+                        </div>
+                        <div>
+                          <p className="font-medium">{p.name}</p>
+                          {currentQuestion.type === 'reorder' ? (
+                             <div>
+                                <p className="text-sm text-muted-foreground">
+                                    Ordine inviato: {answer.answerOrder?.join(', ')}
+                                </p>
+                                {quiz.state === 'question-results' && (
+                                <p className="text-sm font-bold mt-1">
+                                    Ordine corretto: {currentQuestion.correctOrder?.join(', ')}
+                                </p>
+                                )}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">{answer.answerText}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {answer.isCheating && (
+                           <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                               <Badge variant="destructive" className="gap-1">
+                                <AlertTriangle className="h-3 w-3" /> Barando?
+                               </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{answer.cheatingReason}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                           </TooltipProvider>
+                        )}
+                        <span className="text-sm font-mono">{answer.responseTime.toFixed(3)}s</span>
+                         
+                          <div className="flex items-center gap-1">
+                            <Input 
+                              type="number"
+                              key={`${p.id}-${currentQuestion.id}`}
+                              defaultValue={questionScores[p.id] ?? answer.score ?? 0}
+                              onChange={(e) => {
+                                setHasScoresSavedForCurrentQ(false);
+                                const newScores = {...questionScores};
+                                newScores[p.id] = parseInt(e.target.value, 10) || 0;
+                                setQuestionScores(newScores);
+                              }}
+                              className="w-20 h-8"
+                              aria-label={`Punteggio per ${p.name}`}
+                              disabled={isReadOnly}
+                            />
+                            <span>pti</span>
+                          </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </CardContent>
+              <CardFooter className="flex-col sm:flex-row gap-2 justify-end">
+                {currentAnswers.length < participants.length && quiz.state === 'live' && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="outline" className="w-full sm:w-auto" disabled={isReadOnly}>
+                        Forza Prossima Domanda
+                        <SkipForward className="ml-2" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Sei sicuro?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Questo forzerà il passaggio alla domanda successiva per tutti i partecipanti, anche per quelli che non hanno ancora risposto.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Annulla</AlertDialogCancel>
+                        <AlertDialogAction onClick={nextQuestion}>Continua</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+                 {quiz.state === 'live' && (
+                  <Button onClick={showQuestionResults} disabled={isReadOnly || currentAnswers.length < participants.length}>
+                    <Eye className="mr-2" />
+                    Mostra Risposte
+                  </Button>
+                )}
+                <Button onClick={saveScoresForCurrentQuestion} disabled={isSavingScores || hasScoresSavedForCurrentQ || isReadOnly}>
+                  {isSavingScores ? <Loader2 className="mr-2 animate-spin" /> : <Save className="mr-2" />}
+                  Salva Punteggi
+                </Button>
+                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={!hasScoresSavedForCurrentQ || isReadOnly}>
+                  {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina il Quiz"}
+                  <ArrowRight className="ml-2"/>
+                </Button>
+              </CardFooter>
+            </Card>
+          </div>
+        );
+      case "results":
+        const finalParticipants = [...participants].sort((a,b) => b.score - a.score);
+        return (
+          <Card className="text-center">
+            <CardHeader>
+              <CardTitle className="font-headline text-3xl">Quiz Terminato!</CardTitle>
+              <CardDescription>Ecco i punteggi finali per questo round.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {finalParticipants.map((p, i) => (
+                 <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-lg w-6">{i+1}</span>
+                      <div className="relative">
+                        <img src={p.avatar} alt={p.name} className="w-10 h-10 rounded-full" />
+                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-4 w-4 text-yellow-500 fill-yellow-500" />}
+                      </div>
+                      <span className="font-medium">{p.name}</span>
+                    </div>
+                    <div className="flex flex-col items-end">
+                        <span className="text-lg font-bold">{p.score} pti</span>
+                        {p.jollyActive && <span className="text-[10px] text-yellow-600 font-bold uppercase">Jolly Giocato!</span>}
+                    </div>
+                  </div>
+              ))}
+            </CardContent>
+            <CardFooter className="flex-col sm:flex-row gap-2">
+              <Button onClick={restartQuiz} variant="outline" className="w-full" disabled={isReadOnly}>Ricomincia il Quiz</Button>
+              <Button onClick={resetQuiz} className="w-full" disabled={isReadOnly}>Nuovo Quiz</Button>
+            </CardFooter>
+          </Card>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const getQuizStateLabel = () => {
+    if (!quiz) return 'Caricamento...';
+    switch(quiz.state) {
+      case 'creating': return 'Creazione Quiz';
+      case 'lobby': return `Lobby: ${quiz.name}`;
+      case 'live': return `In Diretta: Domanda ${quiz.currentQuestionIndex + 1}`;
+      case 'question-results': return `Risultati: Domanda ${quiz.currentQuestionIndex + 1}`;
+      case 'results': return `Risultati: ${quiz.name}`;
+    }
+  }
+
   return (
     <SidebarProvider>
-      <div className="h-screen flex flex-col w-full">
-        <header className="flex h-14 items-center gap-4 border-b bg-card px-4 lg:px-6">
+      <div className="h-screen flex flex-col">
+        <header className="flex h-14 items-center gap-4 border-b bg-card px-4 lg:h-[60px] lg:px-6">
             <SidebarTrigger className="md:hidden"/>
             <div className="flex items-center gap-2 font-semibold">
                 <LayoutGrid className="h-6 w-6 text-primary" />
-                <span className="font-headline text-xl hidden sm:inline">MaestroDiQuiz</span>
+                <span className="font-headline text-xl">MaestroDiQuiz</span>
             </div>
-            <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center gap-3 px-3 border-r">
-                  <div className="flex items-center gap-1">
-                    <Zap className={cn("h-4 w-4", settings?.jollyEnabled ? "text-yellow-500" : "text-muted-foreground")} />
-                    <Switch checked={settings?.jollyEnabled} onCheckedChange={toggleJolly} disabled={isReadOnly} />
+            <div className="ml-auto flex items-center gap-2 sm:gap-4">
+                <h1 className="text-base sm:text-lg font-semibold md:text-2xl font-headline capitalize truncate hidden sm:block">{getQuizStateLabel()}</h1>
+                <div className="flex items-center gap-2 sm:gap-4 px-2 sm:px-4 border-r pr-2 sm:pr-6">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-4 w-4 text-yellow-500" />
+                    <Switch 
+                      id="jolly-toggle" 
+                      checked={settings?.jollyEnabled ?? false} 
+                      onCheckedChange={toggleJollyFunction}
+                      disabled={isReadOnly}
+                    />
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Trophy className={cn("h-4 w-4", settings?.leaderboardEnabled ? "text-primary" : "text-muted-foreground")} />
-                    <Switch checked={settings?.leaderboardEnabled} onCheckedChange={toggleBoard} disabled={isReadOnly} />
+                  <div className="flex items-center gap-1.5">
+                    <Trophy className="h-4 w-4 text-primary" />
+                    <Switch 
+                      id="leaderboard-toggle" 
+                      checked={settings?.leaderboardEnabled ?? false} 
+                      onCheckedChange={toggleLeaderboardVisibility}
+                      disabled={isReadOnly}
+                    />
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => auth.signOut()}><LogOut className="h-5 w-5"/></Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="icon" title="Reset Sessione">
+                      <RefreshCw className="h-5 w-5" />
+                      <span className="sr-only">Reset Sessione</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Sei sicuro di voler resettare la sessione?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Questa azione è utile se l'interfaccia sembra bloccata. Cancellerà la bozza o il quiz attivo dalla memoria locale, permettendoti di ricominciare. Non eliminerà i dati già salvati su Firestore.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Annulla</AlertDialogCancel>
+                      <AlertDialogAction onClick={resetQuiz}>Sì, resetta</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <Button variant="ghost" size="icon" onClick={() => auth.signOut()}>
+                    <LogOut className="h-5 w-5" />
+                    <span className="sr-only">Esci</span>
+                </Button>
             </div>
         </header>
         <div className="flex flex-1 overflow-hidden">
           <Sidebar>
-            <SidebarHeader className="p-4"><h2 className="text-lg font-bold font-headline">Sessione</h2></SidebarHeader>
+            <SidebarHeader>
+              <h2 className="text-lg font-semibold font-headline">Sessione</h2>
+            </SidebarHeader>
             <SidebarContent>
-              <ParticipantsSidebar participants={participants} leaderboard={[]} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
-              <MediaGallerySidebar mediaItems={mediaGallery || []} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
+              <ParticipantsSidebar 
+                participants={participants} 
+                leaderboard={leaderboard || []}
+                onResetLeaderboard={resetLeaderboard}
+                isReadOnly={isReadOnly}
+                />
+               <MediaGallerySidebar mediaItems={mediaGallery} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
             </SidebarContent>
           </Sidebar>
-          <SidebarInset className="p-4 sm:p-6 overflow-auto bg-background/50">
-            {quiz.state === 'creating' ? (
-                <div className="max-w-4xl mx-auto space-y-6">
-                    <Card>
-                        <CardHeader><CardTitle className="font-headline">Aggiungi Media alla Galleria</CardTitle><CardDescription>Carica un file o incolla un link esterno (Supabase, Imgur, etc).</CardDescription></CardHeader>
-                        <CardContent className="space-y-4">
-                           <div className="grid gap-4 sm:grid-cols-3">
-                                <Input placeholder="Nome Media (es. Sigla)" value={newMediaName} onChange={e => setNewMediaName(e.target.value)} disabled={isReadOnly}/>
-                                <Input placeholder="URL Media" value={newMediaUrl} onChange={e => setNewMediaUrl(e.target.value)} disabled={isReadOnly}/>
-                                <Select value={newMediaType} onValueChange={v => setNewMediaType(v as any)} disabled={isReadOnly}>
-                                    <SelectTrigger><SelectValue placeholder="Tipo Media"/></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="image">Immagine</SelectItem>
-                                        <SelectItem value="video">Video</SelectItem>
-                                        <SelectItem value="audio">Audio</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="flex flex-col sm:flex-row gap-4 items-center">
-                                <div className="w-full sm:w-auto">
-                                  <FileUploaderRegular
-                                      pubkey={UPLOADCARE_PUBLIC_KEY} 
-                                      maxLocalFileCount={1}
-                                      imgOnly={newMediaType === 'image'}
-                                      onFileUploadSuccess={(fileInfo) => {
-                                          setNewMediaUrl(fileInfo.cdnUrl || "");
-                                          if (!newMediaName) setNewMediaName(fileInfo.name || "Nuovo Media");
-                                          toast({ title: "File caricato!", description: "L'URL è stato generato. Clicca 'Salva' per aggiungerlo alla galleria." });
-                                      }}
-                                  />
-                                </div>
-                                <Button className="w-full sm:flex-1" onClick={handleAddExternalMedia} disabled={isReadOnly || isAddingMedia}>
-                                    {isAddingMedia ? <Loader2 className="animate-spin mr-2"/> : <PlusCircle className="mr-2"/>} Salva nella Galleria
-                                </Button>
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader><CardTitle className="font-headline">Configura Quiz</CardTitle></CardHeader>
-                        <CardContent className="space-y-4">
-                            <Input placeholder="Nome Quiz" value={quiz.name} onChange={e => setQuiz({...quiz, name: e.target.value})} disabled={isReadOnly}/>
-                            <div className="grid grid-cols-3 gap-2">
-                                {topics.map((t,i) => <Input key={i} placeholder={`Tema ${i+1}`} value={t} onChange={e => {const n=[...topics]; n[i]=e.target.value; setTopics(n)}} disabled={isReadOnly}/>)}
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader><CardTitle className="font-headline">Domande</CardTitle></CardHeader>
-                        <CardContent>
-                            <Form {...form}>
-                                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <FormField control={form.control} name="type" render={({field}) => (
-                                            <FormItem>
-                                                <FormLabel>Tipo</FormLabel>
-                                                <Select onValueChange={field.onChange} value={field.value}>
-                                                    <FormControl>
-                                                      <SelectTrigger><SelectValue placeholder="Seleziona tipo"/></SelectTrigger>
-                                                    </FormControl>
-                                                    <SelectContent>
-                                                        <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
-                                                        <SelectItem value="open-ended">Aperta</SelectItem>
-                                                        <SelectItem value="image">Immagine</SelectItem>
-                                                        <SelectItem value="video">Video</SelectItem>
-                                                        <SelectItem value="audio">Audio</SelectItem>
-                                                        <SelectItem value="reorder">Riordina</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </FormItem>
-                                        )}/>
-                                        {['image','video','audio'].includes(questionType) && (
-                                            <FormField control={form.control} name="answerType" render={({field}) => (
-                                                <FormItem>
-                                                    <FormLabel>Risposta</FormLabel>
-                                                    <Select onValueChange={field.onChange} value={field.value}>
-                                                        <FormControl>
-                                                          <SelectTrigger><SelectValue placeholder="Tipo risposta"/></SelectTrigger>
-                                                        </FormControl>
-                                                        <SelectContent>
-                                                            <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
-                                                            <SelectItem value="open-ended">Aperta</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </FormItem>
-                                            )}/>
-                                        )}
-                                    </div>
-                                    <FormField control={form.control} name="text" render={({field}) => <FormItem><FormLabel>Domanda</FormLabel><Textarea {...field}/></FormItem>}/>
-                                    {['image','video','audio'].includes(questionType) && (
-                                        <FormField control={form.control} name="mediaUrl" render={({field}) => (
-                                            <FormItem>
-                                                <FormLabel>URL Media</FormLabel>
-                                                <Input {...field} placeholder="Incolla URL dalla galleria o esterno" className="flex-1" />
-                                            </FormItem>
-                                        )} />
-                                    )}
-                                    <Button type="submit" variant="secondary" disabled={isReadOnly}>Aggiungi Domanda</Button>
-                                </form>
-                            </Form>
-                            <div className="mt-6 space-y-2">
-                                {quiz.questions.map((q,i) => (
-                                    <div key={q.id} className="flex items-center justify-between p-3 border rounded-lg">
-                                        <span className="text-sm font-medium">{i+1}. {q.text}</span>
-                                        <Button size="icon" variant="ghost" onClick={() => setQuiz({...quiz, questions: quiz.questions.filter(x => x.id !== q.id)})} disabled={isReadOnly}><Trash2 className="h-4 w-4"/></Button>
-                                    </div>
-                                ))}
-                            </div>
-                        </CardContent>
-                        <CardFooter><Button className="w-full" onClick={startQuiz} disabled={isReadOnly || quiz.questions.length === 0}>Crea Lobby</Button></CardFooter>
-                    </Card>
-                </div>
-            ) : quiz.state === 'lobby' ? (
-                <Card className="max-w-2xl mx-auto text-center p-6 space-y-6">
-                    <CardTitle className="text-3xl font-headline">Lobby</CardTitle>
-                    <div className="p-4 bg-muted rounded-lg flex items-center justify-center gap-2 font-mono break-all">{inviteLink}<Button variant="ghost" onClick={() => {navigator.clipboard.writeText(inviteLink); toast({title:"Copiato!"})}}><Copy/></Button></div>
-                    <div className="flex flex-wrap justify-center gap-4">
-                        {participants.map(p => <div key={p.id} className="text-center"><img src={p.avatar} className="w-12 h-12 rounded-full mx-auto"/><span className="text-xs">{p.name}</span></div>)}
-                    </div>
-                    <Button size="lg" className="w-full" onClick={beginQuiz} disabled={isReadOnly || participants.length === 0}>Inizia Quiz</Button>
-                </Card>
-            ) : (
-                <div className="max-w-4xl mx-auto space-y-6">
-                    <Card>
-                        <CardHeader className="flex flex-row justify-between items-center"><CardTitle className="text-2xl">{currentQuestion?.text}</CardTitle><Badge variant="outline">Domanda {quiz.currentQuestionIndex + 1}</Badge></CardHeader>
-                        <CardContent>
-                            {currentQuestion?.mediaUrl && (
-                                <div className="max-w-md mx-auto mb-4">
-                                    {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} className="rounded-lg w-full" alt="Domanda"/>}
-                                    {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="w-full"/>}
-                                    {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full"/>}
-                                </div>
-                            )}
-                            <div className="space-y-3">
-                                {participants.map(p => {
-                                    const ans = currentAnswers.find(a => a.participantId === p.id);
-                                    return (
-                                        <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg bg-card shadow-sm">
-                                            <div className="flex items-center gap-3"><img src={p.avatar} className="w-8 h-8 rounded-full" alt={p.name}/><span>{p.name}</span></div>
-                                            <div className="flex items-center gap-4">
-                                                <span className="text-xs text-muted-foreground">{ans?.answerText || "In attesa..."}</span>
-                                                <div className="flex items-center gap-1">
-                                                    <Input type="number" className="w-16 h-8" defaultValue={questionScores[p.id] || 0} onChange={e => {setHasScoresSavedForCurrentQ(false); setQuestionScores({...questionScores, [p.id]: parseInt(e.target.value)})}} disabled={isReadOnly}/>
-                                                    <span className="text-xs">pti</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-end gap-2">
-                            {quiz.state === 'live' && <Button onClick={showResults} disabled={isReadOnly}>Blocca e Mostra Risposte</Button>}
-                            <Button onClick={saveScores} disabled={isReadOnly || isSavingScores || hasScoresSavedForCurrentQ}>Salva Punteggi</Button>
-                            <Button onClick={nextQuestion} disabled={isReadOnly || !hasScoresSavedForCurrentQ} style={{background: 'hsl(var(--accent))'}}>{quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Avanti" : "Fine Quiz"}</Button>
-                        </CardFooter>
-                    </Card>
-                </div>
-            )}
+          <SidebarInset className="p-4 sm:p-6 overflow-auto">
+            {renderContent()}
           </SidebarInset>
         </div>
       </div>

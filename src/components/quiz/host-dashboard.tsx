@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -1248,7 +1249,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                         <span className="text-sm font-mono">{answer.responseTime.toFixed(3)}s</span>
                          
                           <div className="flex items-center gap-1">
-                            <Input 
+                            <input 
                               type="number"
                               key={`${p.id}-${currentQuestion.id}`}
                               defaultValue={questionScores[p.id] ?? answer.score ?? 0}
@@ -1258,7 +1259,7 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
                                 newScores[p.id] = parseInt(e.target.value, 10) || 0;
                                 setQuestionScores(newScores);
                               }}
-                              className="w-20 h-8"
+                              className="w-20 h-8 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                               aria-label={`Punteggio per ${p.name}`}
                               disabled={isReadOnly}
                             />

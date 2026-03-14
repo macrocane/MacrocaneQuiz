@@ -1,32 +1,44 @@
-
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, getDocs, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, writeBatch, FirestoreError, getDocs, getDoc, increment, query, orderBy } from 'firebase/firestore';
 import {
-  LayoutGrid,
+  ArrowRight,
+  ClipboardPlus,
   Copy,
+  LayoutGrid,
+  Link as LinkIcon,
+  ListChecks,
+  Play,
   Trash2,
-  PlusCircle,
-  Loader2,
-  LogOut,
-  Zap,
   Trophy,
+  AlertTriangle,
+  Upload,
+  GripVertical,
+  Pencil,
+  Home,
+  SkipForward,
+  Eye,
+  LogOut,
+  Loader2,
+  RefreshCw,
+  Save,
+  Zap,
+  Tags,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
+import { FileUploaderRegular } from '@uploadcare/react-uploader/next';
+import '@uploadcare/react-uploader/core.css';
 
-import type { Question, Participant, Answer, Quiz, StoredMedia, AppSettings } from "@/lib/types";
+import type { Question, Participant, Answer, Quiz, LeaderboardEntry, StoredMedia, AppSettings } from "@/lib/types";
 import { detectCheating } from "@/ai/flows/detect-cheating";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, useFirestore, useMemoFirebase, useUser, useCollection, useDoc } from '@/firebase';
-import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-
-import { FileUploaderRegular } from '@uploadcare/react-uploader';
-import '@uploadcare/react-uploader/core.css';
+import { updateDocumentNonBlocking, setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 import {
   SidebarProvider,
@@ -50,10 +62,16 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -63,11 +81,12 @@ import {
 } from "@/components/ui/select";
 import ParticipantsSidebar from "@/components/quiz/participants-sidebar";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
 import MediaGallerySidebar from "@/components/quiz/media-gallery-sidebar";
+import { Switch } from "@/components/ui/switch";
 
-// Recupera la chiave dalle variabili d'ambiente (sicuro per GitHub/Netlify)
-const UPLOADCARE_PUBLIC_KEY = process.env.NEXT_PUBLIC_UPLOADCARE_PUBLIC_KEY || "demotoken";
+const UPLOADCARE_PUB_KEY = process.env.NEXT_PUBLIC_UPLOADCARE_PUBLIC_KEY || 'demotoken';
 
 const questionSchema = z.object({
   text: z.string().min(10, "La domanda deve contenere almeno 10 caratteri."),
@@ -92,9 +111,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [inviteLink, setInviteLink] = useState("");
   const [topics, setTopics] = useState<string[]>(["", "", ""]);
-  const [newMediaName, setNewMediaName] = useState("");
-  const [newMediaUrl, setNewMediaUrl] = useState("");
-  const [newMediaType, setNewMediaType] = useState<'image' | 'video' | 'audio'>('image');
   const { toast } = useToast();
   
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -103,7 +119,6 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const [questionScores, setQuestionScores] = useState<Record<string, number>>({});
   const [hasScoresSavedForCurrentQ, setHasScoresSavedForCurrentQ] = useState(false);
   const [isSavingScores, setIsSavingScores] = useState(false);
-  const [isAddingMedia, setIsAddingMedia] = useState(false);
   
   const auth = useAuth();
   const { user } = useUser();
@@ -112,11 +127,14 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   const settingsDocRef = useMemoFirebase(() => doc(firestore, 'settings', 'main'), [firestore]);
   const { data: settings } = useDoc<AppSettings>(settingsDocRef);
 
+  const mediaColRef = useMemoFirebase(() => collection(firestore, 'media_gallery'), [firestore]);
+  const { data: mediaGallery } = useCollection<StoredMedia>(useMemoFirebase(() => query(mediaColRef, orderBy('createdAt', 'desc')), [mediaColRef]));
+
   const quizDocRef = useMemoFirebase(() => quizId ? doc(firestore, "quizzes", quizId) : null, [firestore, quizId]);
   const participantsColRef = useMemoFirebase(() => quizId ? collection(firestore, `quizzes/${quizId}/participants`) : null, [firestore, quizId]);
 
-  const mediaGalleryColRef = useMemoFirebase(() => collection(firestore, 'media_gallery'), [firestore]);
-  const { data: mediaGallery } = useCollection<StoredMedia>(mediaGalleryColRef);
+  const rankingsColRef = useMemoFirebase(() => collection(firestore, 'monthly_rankings'), [firestore]);
+  const { data: leaderboard } = useCollection<LeaderboardEntry>(rankingsColRef);
 
   const currentQuestion = quiz?.questions?.[quiz.currentQuestionIndex];
 
@@ -131,10 +149,11 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   });
 
   const handleNewAnswer = useCallback(async (answer: Answer) => {
+    const currentQuiz = quizRef.current;
     const currentQuestion = currentQuestionRef.current;
     const currentParticipants = participantsRef.current;
 
-    if (!currentQuestion || isReadOnly) return;
+    if (!currentQuiz || !currentQuestion || isReadOnly) return;
 
     const { isCheating, reason } = await detectCheating({
       responseTime: answer.responseTime,
@@ -147,8 +166,8 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     if (isCheating && participant) {
       toast({
         variant: "destructive",
-        title: "Sospetto Cheating!",
-        description: `${participant.name} potrebbe barare: ${reason}`,
+        title: "Potenziale Tentativo di Barare Rilevato!",
+        description: `Potrebbe essere che ${participant.name} stia barando. Motivo: ${reason}`,
       });
     }
   }, [isReadOnly, toast]);
@@ -171,41 +190,63 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     setQuestionScores({});
     setHasScoresSavedForCurrentQ(false);
     setIsSavingScores(false);
-    try {
+    if (typeof window !== 'undefined') {
       localStorage.removeItem(ACTIVE_QUIZ_ID_KEY);
       localStorage.removeItem(QUIZ_DRAFT_KEY);
-    } catch (error) {
-        console.error("Error clearing session:", error);
     }
   }, [isReadOnly, user]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
-      if (activeQuizId) {
-        setQuizId(activeQuizId);
-        return;
-      }
+    const activeQuizId = localStorage.getItem(ACTIVE_QUIZ_ID_KEY);
+    if (activeQuizId) {
+      setQuizId(activeQuizId);
+    } else {
       const draftJson = localStorage.getItem(QUIZ_DRAFT_KEY);
       if (draftJson) {
-        const draftQuiz = JSON.parse(draftJson) as Quiz;
-        if (draftQuiz && draftQuiz.state === 'creating') {
-          setQuiz(draftQuiz);
-          if (draftQuiz.topics) setTopics(draftQuiz.topics);
-          return;
+        try {
+          const draftQuiz = JSON.parse(draftJson) as Quiz;
+          if (draftQuiz && draftQuiz.state === 'creating') {
+            setQuiz(draftQuiz);
+            if (draftQuiz.topics) setTopics(draftQuiz.topics);
+          }
+        } catch (e) {
+          console.error("Draft parsing failed", e);
         }
       }
-    } catch (error) {
-      console.error("Error restoring session:", error);
     }
-  }, []);
+    
+    if (!quiz && !activeQuizId) {
+        setQuiz({
+            id: '',
+            name: "Il Mio Quiz Fantastico",
+            hostId: user?.uid || '',
+            state: "creating",
+            questions: [],
+            currentQuestionIndex: 0,
+            topics: ["", "", ""],
+        });
+    }
+  }, [user]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (quizId && quiz?.state !== 'creating') {
+      localStorage.setItem(ACTIVE_QUIZ_ID_KEY, quizId);
+      localStorage.removeItem(QUIZ_DRAFT_KEY);
+    } else if (quiz?.state === 'creating') {
+      if (quiz.questions.length > 0 || quiz.name !== "Il Mio Quiz Fantastico") {
+        localStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ ...quiz, topics }));
+      }
+    }
+  }, [quiz, quizId, topics]);
+  
+  useEffect(() => {
     if (!quizDocRef) return;
-    const unsubscribe = onSnapshot(quizDocRef, (doc) => {
-      if (doc.exists()) {
-        setQuiz(doc.data() as Quiz);
+    const unsubscribe = onSnapshot(quizDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const quizData = docSnap.data() as Quiz;
+        setQuiz(quizData);
       } else {
         resetQuiz();
       }
@@ -214,25 +255,29 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
   }, [quizDocRef, resetQuiz]);
 
   useEffect(() => {
-    if (!participantsColRef) return;
+    if (!participantsColRef) {
+      setParticipants([]);
+      return;
+    }
     const unsubscribe = onSnapshot(participantsColRef, (snapshot) => {
       setParticipants(snapshot.docs.map(doc => doc.data() as Participant));
     });
     return () => unsubscribe();
   }, [participantsColRef]);
 
-  const questionsIdentifier = useMemo(() => quiz?.questions.map(q => q.id).join(','), [quiz?.questions]);
-
   useEffect(() => {
-    if (!quizId || !questionsIdentifier) return;
-    const questions = quizRef.current?.questions || [];
+    if (!quizId || !quiz?.questions?.length) {
+        setAnswers([]);
+        return;
+    }
+    const questions = quiz.questions;
     const unsubscribers = questions.map(q => {
-        const questionAnswersColRef = collection(firestore, `quizzes/${quizId}/questions/${q.id}/answers`);
-        return onSnapshot(questionAnswersColRef, (snapshot) => {
+        const qAnswersRef = collection(firestore, `quizzes/${quizId}/questions/${q.id}/answers`);
+        return onSnapshot(qAnswersRef, (snapshot) => {
             const newAnswers = snapshot.docs.map(doc => doc.data() as Answer);
             setAnswers(prev => {
-                const other = prev.filter(ans => ans.questionId !== q.id);
-                return [...other, ...newAnswers];
+                const others = prev.filter(ans => ans.questionId !== q.id);
+                return [...others, ...newAnswers];
             });
             snapshot.docChanges().forEach(change => {
                 if (change.type === 'added') handleNewAnswer(change.doc.data() as Answer);
@@ -240,42 +285,26 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         });
     });
     return () => unsubscribers.forEach(unsub => unsub());
-  }, [quizId, questionsIdentifier, firestore, handleNewAnswer]);
+  }, [quizId, quiz?.questions, firestore, handleNewAnswer]);
 
-  const handleAddExternalMedia = async () => {
-    if (isReadOnly || !newMediaUrl || !newMediaName) {
-      toast({ variant: "destructive", title: "Campi mancanti", description: "Inserisci nome e URL." });
-      return;
-    }
-    setIsAddingMedia(true);
-    try {
-        const mediaId = uuidv4();
-        const mediaData: StoredMedia = {
-            id: mediaId,
-            name: newMediaName,
-            type: newMediaType,
-            url: newMediaUrl,
-            createdAt: new Date().toISOString()
-        };
-        await setDoc(doc(firestore, 'media_gallery', mediaId), mediaData);
-        setNewMediaName("");
-        setNewMediaUrl("");
-        toast({ title: "Media Aggiunto!", description: "Il media è ora nella tua galleria." });
-    } catch (e) {
-        toast({ variant: "destructive", title: "Errore", description: "Impossibile salvare il media." });
-    } finally {
-        setIsAddingMedia(false);
-    }
-  };
-
-  const deleteMedia = async (media: StoredMedia) => {
+  const handleFileUploadSuccess = (fileInfo: any) => {
     if (isReadOnly) return;
-    try {
-        await deleteDoc(doc(firestore, 'media_gallery', media.id));
-        toast({ title: "Media rimosso" });
-    } catch (e) {
-        toast({ variant: "destructive", title: "Errore eliminazione" });
-    }
+    const dataUrl = fileInfo.cdnUrl;
+    const newMedia: StoredMedia = {
+        id: uuidv4(),
+        name: fileInfo.name || 'File caricato',
+        type: fileInfo.isImage ? 'image/url' : 'file/url',
+        url: dataUrl,
+        createdAt: new Date().toISOString()
+    };
+    setDocumentNonBlocking(doc(firestore, 'media_gallery', newMedia.id), newMedia, { merge: true });
+    form.setValue('mediaUrl', dataUrl);
+    toast({ title: "Media Caricato!", description: "Il file è pronto per essere usato." });
+  }
+
+  const deleteMedia = (id: string) => {
+    if (isReadOnly) return;
+    setDoc(doc(firestore, 'media_gallery', id), { deleted: true }, { merge: true });
   };
 
   const form = useForm<z.infer<typeof questionSchema>>({
@@ -288,24 +317,13 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
     },
   });
 
-  const { fields, append, remove } = useFieldArray({
-    control: form.control,
-    name: "options",
-  });
-
+  const { fields, append, remove } = useFieldArray({ control: form.control, name: "options" });
   const questionType = form.watch("type");
   const answerType = form.watch("answerType");
 
   const onSubmit = (data: z.infer<typeof questionSchema>) => {
     if (!quiz || isReadOnly) return;
-    let correctAnswerValue: string | null = null;
     const isMultipleChoice = data.type === 'multiple-choice' || (['image','video','audio'].includes(data.type) && data.answerType === 'multiple-choice');
-    if (isMultipleChoice && data.correctAnswer) {
-        correctAnswerValue = data.options?.[parseInt(data.correctAnswer!)]?.value || null;
-    } else if (data.type === 'open-ended' || (['image','video','audio'].includes(data.type) && data.answerType === 'open-ended')) {
-        correctAnswerValue = data.correctAnswer || null;
-    }
-
     const newQuestion: Question = {
       id: uuidv4(),
       text: data.text,
@@ -313,40 +331,43 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
       mediaUrl: data.mediaUrl || null,
       answerType: data.answerType || null,
       options: data.options?.map((o) => o.value) || [],
-      correctAnswer: correctAnswerValue,
+      correctAnswer: isMultipleChoice ? data.options?.[parseInt(data.correctAnswer!)]?.value || null : data.correctAnswer || null,
       correctOrder: data.type === 'reorder' ? data.options?.map(o => o.value) || [] : [],
     };
     setQuiz(prev => prev ? ({ ...prev, questions: [...prev.questions, newQuestion] }) : null);
-    form.reset({ text: "", type: data.type, answerType: data.answerType, options: data.options, correctAnswer: data.correctAnswer });
+    form.reset({ text: "", type: data.type, answerType: data.answerType, options: data.options, correctAnswer: "0" });
   };
 
   const startQuiz = async () => {
     if (!quiz || isReadOnly || !user) return;
     const newQuizId = uuidv4().slice(0, 8);
-    const state: Quiz = { ...quiz, id: newQuizId, state: "lobby", currentQuestionIndex: 0, topics };
-    await setDoc(doc(firestore, "quizzes", newQuizId), state);
-    setQuizId(newQuizId);
-    setInviteLink(`${window.location.origin}/join/${newQuizId}`);
+    const newQuizDocRef = doc(firestore, "quizzes", newQuizId);
+    try {
+      await setDoc(newQuizDocRef, { ...quiz, id: newQuizId, hostId: user.uid, state: "lobby", topics });
+      setQuizId(newQuizId);
+      setInviteLink(`${window.location.origin}/join/${newQuizId}`);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Errore!", description: "Impossibile creare il quiz." });
+    }
   };
 
   const beginQuiz = () => quizDocRef && updateDocumentNonBlocking(quizDocRef, { state: "live", currentQuestionIndex: 0 });
-  const showResults = () => quizDocRef && updateDocumentNonBlocking(quizDocRef, { state: "question-results" });
+  const showQuestionResults = () => quizDocRef && updateDocumentNonBlocking(quizDocRef, { state: "question-results" });
 
-  const saveScores = async () => {
-    if (!quizId || !participantsColRef || !currentQuestion || isReadOnly) return;
+  const saveScoresForCurrentQuestion = async () => {
+    if (!quizId || !currentQuestion || isReadOnly) return;
     setIsSavingScores(true);
     try {
         const batch = writeBatch(firestore);
-        const snapshot = await getDocs(participantsColRef);
-        snapshot.docs.forEach(d => {
-            const score = questionScores[d.id] ?? 0;
-            const ref = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, d.id);
-            batch.set(ref, { score }, { merge: true });
+        participants.forEach(p => {
+            const score = questionScores[p.id] ?? 0;
+            const answerRef = doc(firestore, `quizzes/${quizId}/questions/${currentQuestion.id}/answers`, p.id);
+            batch.set(answerRef, { score }, { merge: true });
         });
         await batch.commit();
         setHasScoresSavedForCurrentQ(true);
         toast({ title: "Punteggi Salvati!" });
-    } catch (e) {
+    } catch (error) {
         toast({ variant: "destructive", title: "Errore salvataggio" });
     } finally {
         setIsSavingScores(false);
@@ -361,714 +382,244 @@ export default function HostDashboard({ isReadOnly }: HostDashboardProps) {
         setHasScoresSavedForCurrentQ(false);
     } else {
         const batch = writeBatch(firestore);
-        const snapshot = await getDocs(participantsColRef!);
-        for (const d of snapshot.docs) {
+        for (const p of participants) {
             let total = 0;
             for (const q of quiz.questions) {
-                const snap = await getDoc(doc(firestore, `quizzes/${quiz.id}/questions/${q.id}/answers`, d.id));
-                if (snap.exists()) total += (snap.data().score || 0);
+                const answerSnap = await getDoc(doc(firestore, `quizzes/${quiz.id}/questions/${q.id}/answers`, p.id));
+                if (answerSnap.exists()) total += (answerSnap.data().score || 0);
             }
-            batch.update(d.ref, { score: total });
+            batch.update(doc(firestore, `quizzes/${quiz.id}/participants`, p.id), { score: total });
         }
         await batch.commit();
         updateDocumentNonBlocking(quizDocRef, { state: "results" });
     }
   };
 
-  const toggleJolly = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: !settings?.jollyEnabled });
-  const toggleBoard = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { leaderboardEnabled: !settings?.leaderboardEnabled });
-
-  if (!quiz) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
-  const currentAnswers = answers.filter(a => a.questionId === currentQuestion?.id) || [];
-
+  const toggleJollyFunction = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { jollyEnabled: !settings?.jollyEnabled });
+  const toggleLeaderboardVisibility = () => settingsDocRef && updateDocumentNonBlocking(settingsDocRef, { leaderboardEnabled: !settings?.leaderboardEnabled });
 
   const renderContent = () => {
+    if (!quiz) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
+
     switch (quiz.state) {
       case "creating":
         const showOptions = questionType === "multiple-choice" || (['image', 'video', 'audio'].includes(questionType) && answerType === 'multiple-choice');
-        const showReorderOptions = questionType === 'reorder';
-        const showOpenEndedCorrectAnswer = questionType === 'open-ended' || (['image', 'video', 'audio'].includes(questionType) && answerType === 'open-ended');
-
         return (
           <div className="space-y-6">
-            {isReadOnly && (
-                <Alert variant="default" className="bg-yellow-50 border-yellow-200 text-yellow-800">
-                    <AlertTriangle className="h-4 w-4 !text-yellow-800" />
-                    <AlertTitle>Modalità Sola Lettura</AlertTitle>
-                    <AlertDescription>
-                        Stai visualizzando come Co-Host. Non puoi modificare il quiz.
-                    </AlertDescription>
-                </Alert>
-            )}
             <Card>
-              <CardHeader>
-                <CardTitle className="font-headline flex items-center gap-2">
-                  <Pencil size={24} /> Dettagli del Quiz
-                </CardTitle>
-              </CardHeader>
+              <CardHeader><CardTitle className="font-headline flex items-center gap-2"><Pencil size={24} /> Dettagli del Quiz</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                    <Label htmlFor="quiz-name">Nome del Quiz</Label>
-                    <Input
-                        id="quiz-name"
-                        value={quiz.name}
-                        onChange={(e) => setQuiz(prev => prev ? ({ ...prev, name: e.target.value }) : null)}
-                        placeholder="Es. Quiz di Cultura Generale"
-                        disabled={isReadOnly}
-                    />
-                </div>
-                <div className="space-y-3">
-                   <Label className="flex items-center gap-2">
-                     <Tags className="h-4 w-4" /> Temi della Serata (3 argomenti)
-                   </Label>
-                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {topics.map((topic, idx) => (
-                        <Input 
-                          key={idx}
-                          placeholder={`Tema ${idx + 1}`}
-                          value={topic}
-                          onChange={(e) => {
-                            const newTopics = [...topics];
-                            newTopics[idx] = e.target.value;
-                            setTopics(newTopics);
-                          }}
-                          disabled={isReadOnly}
-                        />
-                      ))}
-                   </div>
-                   <p className="text-[10px] text-muted-foreground">Questi temi verranno mostrati ai partecipanti nella lobby.</p>
+                <Input value={quiz.name} onChange={(e) => setQuiz(prev => prev ? ({ ...prev, name: e.target.value }) : null)} placeholder="Nome del Quiz" disabled={isReadOnly} />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {topics.map((t, i) => (
+                    <Input key={i} placeholder={`Tema ${i + 1}`} value={t} onChange={(e) => { const n = [...topics]; n[i] = e.target.value; setTopics(n); }} disabled={isReadOnly} />
+                  ))}
                 </div>
               </CardContent>
             </Card>
-
             <Card>
-              <CardHeader>
-                <CardTitle className="font-headline flex items-center gap-2">
-                  <ClipboardPlus size={24} /> Crea una Nuova Domanda
-                </CardTitle>
-                <CardDescription>
-                  Aggiungi domande al tuo quiz. Puoi scegliere tra vari formati.
-                </CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle className="font-headline flex items-center gap-2"><ClipboardPlus size={24} /> Crea Domanda</CardTitle></CardHeader>
               <CardContent>
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                    <fieldset disabled={isReadOnly}>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormField
-                                control={form.control}
-                                name="type"
-                                render={({ field }) => (
-                                    <FormItem>
-                                    <FormLabel>Tipo di Domanda</FormLabel>
-                                    <Select 
-                                        onValueChange={(value) => {
-                                            field.onChange(value);
-                                            if (value === 'multiple-choice' || value === 'reorder') {
-                                                form.setValue('answerType', undefined);
-                                            } else if (value === 'open-ended') {
-                                                form.setValue('answerType', undefined);
-                                                form.setValue('options', []);
-                                            } else {
-                                                form.setValue('answerType', 'multiple-choice');
-                                            }
-                                        }}
-                                        value={field.value}
-                                        disabled={isReadOnly}
-                                    >
-                                        <FormControl>
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Seleziona un tipo di domanda" />
-                                        </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
-                                            <SelectItem value="open-ended">Risposta Aperta</SelectItem>
-                                            <SelectItem value="image">Basata su Immagine</SelectItem>
-                                            <SelectItem value="video">Basata su Video</SelectItem>
-                                            <SelectItem value="audio">Basata su Audio</SelectItem>
-                                            <SelectItem value="reorder">Riordina le risposte</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                            {['image', 'video', 'audio'].includes(questionType) && (
-                                <FormField
-                                control={form.control}
-                                name="answerType"
-                                render={({ field }) => (
-                                    <FormItem>
-                                    <FormLabel>Tipo di Risposta</FormLabel>
-                                    <Select 
-                                        onValueChange={(value) => {
-                                            field.onChange(value);
-                                            if (value === 'open-ended') {
-                                                form.setValue('options', []);
-                                            }
-                                        }}
-                                        value={field.value}
-                                        disabled={isReadOnly}
-                                    >
-                                        <FormControl>
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Seleziona un tipo di risposta" />
-                                        </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                        <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
-                                        <SelectItem value="open-ended">Risposta Aperta</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                    </FormItem>
-                                )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField control={form.control} name="type" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Tipo</FormLabel>
+                          <Select onValueChange={(v) => { field.onChange(v); form.setValue('answerType', v === 'multiple-choice' ? undefined : 'multiple-choice'); }} value={field.value} disabled={isReadOnly}>
+                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                            <SelectContent>
+                              <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
+                              <SelectItem value="open-ended">Aperta</SelectItem>
+                              <SelectItem value="image">Immagine</SelectItem>
+                              <SelectItem value="video">Video</SelectItem>
+                              <SelectItem value="audio">Audio</SelectItem>
+                              <SelectItem value="reorder">Riordina</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )} />
+                      {['image', 'video', 'audio'].includes(questionType) && (
+                        <FormField control={form.control} name="answerType" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Risposta</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value!} disabled={isReadOnly}>
+                              <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                              <SelectContent>
+                                <SelectItem value="multiple-choice">Scelta Multipla</SelectItem>
+                                <SelectItem value="open-ended">Aperta</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormItem>
+                        )} />
+                      )}
+                    </div>
+                    <FormField control={form.control} name="text" render={({ field }) => (
+                      <FormItem><FormLabel>Domanda</FormLabel><FormControl><Textarea {...field} disabled={isReadOnly} /></FormControl></FormItem>
+                    )} />
+                    {['image', 'video', 'audio'].includes(questionType) && (
+                        <div className="space-y-4">
+                            <Label>Carica o Incolla URL</Label>
+                            <div className="flex flex-col gap-4">
+                                <FileUploaderRegular
+                                    pubkey={UPLOADCARE_PUB_KEY}
+                                    onFileUploadSuccess={handleFileUploadSuccess}
+                                    imgOnly={questionType === 'image'}
                                 />
-                            )}
-                        </div>
-                        
-                        <FormField
-                        control={form.control}
-                        name="text"
-                        render={({ field }) => (
-                            <FormItem className="mt-6">
-                            <FormLabel>Testo della Domanda</FormLabel>
-                            <FormControl>
-                                <Textarea placeholder="es. Qual è la capitale della Francia?" {...field} disabled={isReadOnly} />
-                            </FormControl>
-                            <FormMessage />
-                            </FormItem>
-                        )}
-                        />
-
-                        {['image', 'video', 'audio'].includes(questionType) && (
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                                <FormItem>
-                                    <FormLabel>Carica File</FormLabel>
-                                    <FormControl>
-                                        <div>
-                                            <input 
-                                                id="media-upload"
-                                                type="file"
-                                                accept="image/*,video/*,audio/*"
-                                                className="sr-only"
-                                                onChange={(e) => {
-                                                    if (e.target.files && e.target.files[0]) {
-                                                        handleFileUpload(e.target.files[0]);
-                                                    }
-                                                }}
-                                                disabled={isReadOnly}
-                                            />
-                                            <Label htmlFor="media-upload" className={cn("w-full", isReadOnly ? "cursor-not-allowed" : "")}>
-                                                <div className={cn("flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-muted-foreground/50", isReadOnly ? "bg-muted/50" : "cursor-pointer hover:bg-muted")}>
-                                                    <Upload className="h-5 w-5 text-muted-foreground"/>
-                                                    <span className="text-muted-foreground">Sfoglia</span>
-                                                </div>
-                                            </Label>
-                                        </div>
-                                    </FormControl>
-                                    <FormDescription>Locale (limite 5MB)</FormDescription>
-                                </FormItem>
-                                <FormField
-                                    control={form.control}
-                                    name="mediaUrl"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Oppure URL Esterno</FormLabel>
-                                            <FormControl>
-                                                <Input placeholder="https://..." {...field} value={field.value ?? ""} disabled={isReadOnly} />
-                                            </FormControl>
-                                            <FormDescription>Consigliato per file grandi</FormDescription>
-                                        </FormItem>
-                                    )}
-                                />
-                             </div>
-                        )}
-
-                        {showOptions && (
-                        <FormField
-                            control={form.control}
-                            name="correctAnswer"
-                            render={({ field }) => (
-                            <FormItem className="space-y-3 mt-6">
-                                <FormLabel>Opzioni (seleziona la risposta corretta)</FormLabel>
-                                <RadioGroup
-                                onValueChange={field.onChange}
-                                value={field.value}
-                                className="space-y-2"
-                                disabled={isReadOnly}
-                                >
-                                {fields.map((item, index) => (
-                                    <FormField
-                                    key={item.id}
-                                    control={form.control}
-                                    name={`options.${index}.value`}
-                                    render={({ field: optionField }) => (
-                                        <FormItem className="flex items-center gap-2">
-                                        <FormControl>
-                                            <RadioGroupItem value={index.toString()} id={`options.${index}`} disabled={isReadOnly} />
-                                        </FormControl>
-                                        <Input placeholder={`Opzione ${index + 1}`} {...optionField} disabled={isReadOnly} />
-                                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isReadOnly}>
-                                            <Trash2 className="h-4 w-4"/>
-                                        </Button>
-                                        </FormItem>
-                                    )}
-                                    />
-                                ))}
-                                </RadioGroup>
-                                <Button type="button" variant="outline" size="sm" onClick={() => append({ value: "" })} disabled={isReadOnly}>
-                                    Aggiungi opzione
-                                </Button>
-                                <FormMessage />
-                            </FormItem>
-                            )}
-                        />
-                        )}
-
-                        {showReorderOptions && (
-                            <div className="space-y-3 mt-6">
-                                <FormLabel>Opzioni da riordinare (nell'ordine corretto)</FormLabel>
-                                <div className="space-y-2">
-                                {fields.map((item, index) => (
-                                    <FormField
-                                    key={item.id}
-                                    control={form.control}
-                                    name={`options.${index}.value`}
-                                    render={({ field }) => (
-                                        <FormItem className="flex items-center gap-2">
-                                        <GripVertical className="h-5 w-5 text-muted-foreground cursor-grab"/>
-                                        <FormControl>
-                                            <Input placeholder={`Elemento ${index + 1}`} {...field} disabled={isReadOnly} />
-                                        </FormControl>
-                                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isReadOnly}>
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                        </FormItem>
-                                    )}
-                                    />
-                                ))}
-                                </div>
-                                <Button type="button" variant="outline" size="sm" onClick={() => append({ value: "" })} disabled={isReadOnly}>
-                                    Aggiungi opzione
-                                </Button>
-                                <FormDescription>
-                                    L'ordine in cui li lasci sarà considerato quello corretto.
-                                </FormDescription>
+                                <FormField control={form.control} name="mediaUrl" render={({ field }) => (
+                                    <Input placeholder="Incolla URL qui" {...field} value={field.value || ""} disabled={isReadOnly} />
+                                )} />
                             </div>
-                        )}
-                        
-                        {showOpenEndedCorrectAnswer && (
-                             <FormField
-                                control={form.control}
-                                name="correctAnswer"
-                                render={({ field }) => (
-                                    <FormItem className="mt-6">
-                                    <FormLabel>Risposta corretta (opzionale)</FormLabel>
-                                    <FormControl>
-                                        <Input placeholder="Inserisci la risposta di riferimento" {...field} value={field.value ?? ""} disabled={isReadOnly} />
-                                    </FormControl>
-                                     <FormDescription>
-                                        Questa risposta verrà mostrata ai partecipanti dopo la domanda.
-                                    </FormDescription>
-                                    <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                        )}
-
-                        <Button type="submit" variant="secondary" className="mt-6" disabled={isReadOnly}>Aggiungi Domanda</Button>
-                    </fieldset>
+                        </div>
+                    )}
+                    {showOptions && fields.map((item, index) => (
+                        <FormField key={item.id} control={form.control} name={`options.${index}.value`} render={({ field }) => (
+                            <div className="flex gap-2 items-center">
+                                <RadioGroup value={form.watch('correctAnswer')} onValueChange={(v) => form.setValue('correctAnswer', v)}><RadioGroupItem value={index.toString()} /></RadioGroup>
+                                <Input {...field} disabled={isReadOnly} />
+                                <Button size="icon" variant="ghost" onClick={() => remove(index)}><Trash2 className="h-4 w-4" /></Button>
+                            </div>
+                        )} />
+                    ))}
+                    {showOptions && <Button type="button" variant="outline" onClick={() => append({ value: "" })}>Aggiungi Opzione</Button>}
+                    <Button type="submit" className="w-full">Aggiungi Domanda</Button>
                   </form>
                 </Form>
               </CardContent>
             </Card>
-
-            {quiz.questions && quiz.questions.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="font-headline flex items-center gap-2"><ListChecks size={24}/> Domande del Quiz</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {quiz.questions.map((q, i) => (
-                    <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border">
-                      <p className="font-medium">{i + 1}. {q.text}</p>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">{getQuestionTypeLabel(q)}</Badge>
-                        <Button variant="ghost" size="icon" onClick={() => deleteQuestion(q.id)} disabled={isReadOnly}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-                <CardFooter>
-                  <Button onClick={startQuiz} className="w-full" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={quiz.questions.length === 0 || isReadOnly}>
-                    Crea Lobby del Quiz <ArrowRight className="ml-2" />
-                  </Button>
-                </CardFooter>
-              </Card>
-            )}
+            {quiz.questions.map((q, i) => (
+                <div key={q.id} className="p-3 border rounded-lg flex justify-between items-center bg-card">
+                    <span>{i + 1}. {q.text}</span>
+                    <Button variant="ghost" size="icon" onClick={() => setQuiz(prev => prev ? ({ ...prev, questions: prev.questions.filter(qu => qu.id !== q.id) }) : null)}><Trash2 className="h-4 w-4" /></Button>
+                </div>
+            ))}
+            <Button onClick={startQuiz} className="w-full" size="lg" disabled={!quiz.questions.length || isReadOnly}>Crea Lobby <ArrowRight className="ml-2" /></Button>
           </div>
         );
       case "lobby":
         return (
-          <Card className="text-center">
-            <CardHeader>
-              <CardTitle className="font-headline text-3xl">Lobby del Quiz</CardTitle>
-              <CardDescription>Condividi il link qui sotto per invitare i partecipanti. Il quiz inizierà quando sarai pronto.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {quiz.topics && quiz.topics.some(t => t !== "") && (
-                <div className="p-4 rounded-lg bg-accent/10 border border-accent/20">
-                  <h3 className="text-sm font-bold uppercase tracking-wider mb-2 flex items-center justify-center gap-2">
-                    <Tags className="h-4 w-4" /> Temi della serata
-                  </h3>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {quiz.topics.filter(t => t !== "").map((t, idx) => (
-                      <Badge key={idx} variant="secondary">{t}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center justify-center gap-2 p-4 rounded-lg bg-muted border border-dashed">
-                <LinkIcon className="h-5 w-5 text-muted-foreground"/>
-                <span className="text-lg font-mono tracking-wider">{inviteLink}</span>
-                <Button variant="ghost" size="icon" onClick={copyToClipboard}><Copy className="h-5 w-5"/></Button>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold mb-2">Partecipanti ({participants.length})</h3>
-                <div className="flex justify-center gap-4 flex-wrap">
-                   {participants.length > 0 ? participants.map(p => (
-                    <div key={p.id} className="flex flex-col items-center gap-1">
-                      <div className="relative">
-                        <img src={p.avatar} alt={p.name} className="w-12 h-12 rounded-full"/>
-                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-5 w-5 text-yellow-500 fill-yellow-500" />}
-                      </div>
-                      <span className="text-sm font-medium">{p.name}</span>
-                    </div>
-                  )) : (
-                      <p className="text-sm text-muted-foreground">In attesa che i partecipanti si uniscano...</p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col sm:flex-row gap-2">
-               <Button onClick={resetQuiz} variant="outline" className="w-full sm:w-auto" disabled={isReadOnly}>
-                <Home className="mr-2 h-4 w-4" />
-                Home
-              </Button>
-              <Button onClick={beginQuiz} className="w-full" size="lg" disabled={participants.length === 0 || isReadOnly}>
-                Inizia il Quiz per {participants.length} partecipanti <Play className="ml-2"/>
-              </Button>
-            </CardFooter>
+          <Card className="text-center p-6 space-y-6">
+            <CardTitle className="text-3xl">Lobby del Quiz</CardTitle>
+            <div className="p-4 bg-muted font-mono flex items-center justify-center gap-2 rounded-lg">
+              {inviteLink} 
+              <Button size="icon" variant="ghost" onClick={() => { navigator.clipboard.writeText(inviteLink); toast({ title: "Link Copiato!" }); }}><Copy size={16} /></Button>
+            </div>
+            <div className="flex justify-center gap-4 flex-wrap">
+              {participants.map(p => <div key={p.id} className="text-center"><img src={p.avatar} className="w-12 h-12 rounded-full mb-1 mx-auto" alt={p.name} />{p.name}</div>)}
+              {participants.length === 0 && <p className="text-muted-foreground">In attesa di partecipanti...</p>}
+            </div>
+            <Button onClick={beginQuiz} className="w-full" size="lg" disabled={isReadOnly}>Inizia Quiz</Button>
           </Card>
         );
       case "live":
       case "question-results":
-        if (!quiz.questions) return null;
-        const progress = ((quiz.currentQuestionIndex + 1) / quiz.questions.length) * 100;
-        const needsMultipleChoice = currentQuestion.type === 'multiple-choice' || (['image', 'video', 'audio'].includes(currentQuestion.type) && currentQuestion.answerType === 'multiple-choice');
         return (
           <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="font-headline text-3xl mb-2">{currentQuestion.text}</CardTitle>
-                    <CardDescription>{getQuestionTypeLabel(currentQuestion)}</CardDescription>
-                  </div>
-                  <Badge variant="secondary" className="text-lg">
-                    Domanda {quiz.currentQuestionIndex + 1} / {quiz.questions.length}
-                  </Badge>
+            <Card className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <Badge variant="outline">Domanda {quiz.currentQuestionIndex + 1} di {quiz.questions.length}</Badge>
+                  <Badge className="bg-primary">{currentQuestion?.type.toUpperCase()}</Badge>
                 </div>
-              </CardHeader>
-               <CardContent className="space-y-4">
-                {currentQuestion.mediaUrl && ['image', 'video', 'audio'].includes(currentQuestion.type) && (
-                    <div className="w-full max-w-md mx-auto aspect-video relative bg-muted rounded-lg">
-                        {currentQuestion.type === 'image' && <img src={currentQuestion.mediaUrl} alt="Contenuto della domanda" className="rounded-lg object-contain w-full h-full" />}
-                        {currentQuestion.type === 'video' && <video src={currentQuestion.mediaUrl} controls className="rounded-lg object-contain w-full h-full" />}
-                        {currentQuestion.type === 'audio' && <audio src={currentQuestion.mediaUrl} controls className="w-full p-4" />}
-                    </div>
-                )}
-                {needsMultipleChoice && (
-                  <div className="grid grid-cols-2 gap-4">
-                    {currentQuestion.options?.map((opt, i) => (
-                      <div key={i} className={cn(
-                        "p-4 border rounded-lg text-center font-medium",
-                        quiz.state === 'question-results' && opt === currentQuestion.correctAnswer ? "bg-green-100 border-green-300 text-green-800" : "bg-background"
-                      )}>
-                        {opt}
-                      </div>
-                    ))}
+                <CardTitle className="text-2xl mb-4">{currentQuestion?.text}</CardTitle>
+                {currentQuestion?.mediaUrl && (
+                  <div className="relative aspect-video max-h-64 mx-auto my-4 overflow-hidden rounded-lg">
+                    {currentQuestion.type === 'image' ? <img src={currentQuestion.mediaUrl} className="object-contain w-full h-full" alt="Domanda" /> : 
+                     currentQuestion.type === 'video' ? <video src={currentQuestion.mediaUrl} controls className="w-full h-full" /> : 
+                     <audio src={currentQuestion.mediaUrl} controls className="w-full mt-10" />}
                   </div>
                 )}
-                {currentQuestion.type === 'reorder' && (
-                    <Alert>
-                        <GripVertical className="h-4 w-4" />
-                        <AlertTitle>Domanda di Riordino</AlertTitle>
-                        <AlertDescription>
-                            I partecipanti devono riordinare un elenco di elementi. Le risposte verranno mostrate di seguito. {quiz.state === 'question-results' && `L'ordine corretto è: ${currentQuestion.correctOrder?.join(', ')}`}
-                        </AlertDescription>
-                    </Alert>
-                )}
-              </CardContent>
-               <CardFooter>
-                <Progress value={progress} className="w-full" />
-              </CardFooter>
+                <Progress value={((quiz.currentQuestionIndex + 1) / quiz.questions.length) * 100} className="mt-6" />
             </Card>
-
-             <Card>
-              <CardHeader>
-                <CardTitle className="font-headline">Risposte in Diretta ({currentAnswers.length}/{participants.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {participants.map(p => {
-                  const answer = currentAnswers.find(a => a.participantId === p.id);
-                  if (!answer) {
-                    return (
-                      <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border bg-muted/50">
-                        <div className="flex items-center gap-3">
-                          <div className="relative">
-                            <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
-                            {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
+            <Card className="p-6 space-y-4">
+                <CardTitle className="flex justify-between items-center">
+                  <span>Risposte Ricevute</span>
+                  <Badge variant="secondary">{answers.filter(a => a.questionId === currentQuestion?.id).length}/{participants.length}</Badge>
+                </CardTitle>
+                <div className="space-y-2">
+                  {participants.map(p => {
+                      const ans = answers.find(a => a.participantId === p.id && a.questionId === currentQuestion?.id);
+                      return (
+                          <div key={p.id} className="flex justify-between items-center p-3 border rounded bg-card">
+                              <div className="flex items-center gap-2">
+                                <img src={p.avatar} className="w-8 h-8 rounded-full" alt={p.name} />
+                                <span className="font-medium">{p.name}:</span>
+                                <span className="text-muted-foreground italic">{ans?.answerText || "In attesa..."}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Label className="text-xs">Punti:</Label>
+                                <Input type="number" value={questionScores[p.id] ?? 0} onChange={(e) => setQuestionScores({ ...questionScores, [p.id]: parseInt(e.target.value) || 0 })} className="w-20 h-8" disabled={isReadOnly} />
+                              </div>
                           </div>
-                          <span className="font-medium">{p.name}</span>
-                        </div>
-                        <span className="text-sm text-muted-foreground">In attesa di risposta...</span>
-                      </div>
-                    );
-                  }
-                  
-                  return (
-                    <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border">
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
-                           <img src={p.avatar} alt={p.name} className="w-8 h-8 rounded-full" />
-                           {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />}
-                        </div>
-                        <div>
-                          <p className="font-medium">{p.name}</p>
-                          {currentQuestion.type === 'reorder' ? (
-                             <div>
-                                <p className="text-sm text-muted-foreground">
-                                    Ordine inviato: {answer.answerOrder?.join(', ')}
-                                </p>
-                                {quiz.state === 'question-results' && (
-                                <p className="text-sm font-bold mt-1">
-                                    Ordine corretto: {currentQuestion.correctOrder?.join(', ')}
-                                </p>
-                                )}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">{answer.answerText}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        {answer.isCheating && (
-                           <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger>
-                               <Badge variant="destructive" className="gap-1">
-                                <AlertTriangle className="h-3 w-3" /> Barando?
-                               </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{answer.cheatingReason}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                           </TooltipProvider>
-                        )}
-                        <span className="text-sm font-mono">{answer.responseTime.toFixed(3)}s</span>
-                         
-                          <div className="flex items-center gap-1">
-                            <Input 
-                              type="number"
-                              key={`${p.id}-${currentQuestion.id}`}
-                              defaultValue={questionScores[p.id] ?? answer.score ?? 0}
-                              onChange={(e) => {
-                                setHasScoresSavedForCurrentQ(false);
-                                const newScores = {...questionScores};
-                                newScores[p.id] = parseInt(e.target.value, 10) || 0;
-                                setQuestionScores(newScores);
-                              }}
-                              className="w-20 h-8"
-                              aria-label={`Punteggio per ${p.name}`}
-                              disabled={isReadOnly}
-                            />
-                            <span>pti</span>
-                          </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </CardContent>
-              <CardFooter className="flex-col sm:flex-row gap-2 justify-end">
-                {currentAnswers.length < participants.length && quiz.state === 'live' && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="outline" className="w-full sm:w-auto" disabled={isReadOnly}>
-                        Forza Prossima Domanda
-                        <SkipForward className="ml-2" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Sei sicuro?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Questo forzerà il passaggio alla domanda successiva per tutti i partecipanti, anche per quelli che non hanno ancora risposto.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Annulla</AlertDialogCancel>
-                        <AlertDialogAction onClick={nextQuestion}>Continua</AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-                 {quiz.state === 'live' && (
-                  <Button onClick={showQuestionResults} disabled={isReadOnly || currentAnswers.length < participants.length}>
-                    <Eye className="mr-2" />
-                    Mostra Risposte
-                  </Button>
-                )}
-                <Button onClick={saveScoresForCurrentQuestion} disabled={isSavingScores || hasScoresSavedForCurrentQ || isReadOnly}>
-                  {isSavingScores ? <Loader2 className="mr-2 animate-spin" /> : <Save className="mr-2" />}
-                  Salva Punteggi
-                </Button>
-                <Button onClick={nextQuestion} className="w-full sm:w-auto" size="lg" style={{background: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'}} disabled={!hasScoresSavedForCurrentQ || isReadOnly}>
-                  {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina il Quiz"}
-                  <ArrowRight className="ml-2"/>
-                </Button>
-              </CardFooter>
+                      );
+                  })}
+                </div>
+                <div className="flex gap-2 pt-4">
+                    <Button variant="outline" onClick={showQuestionResults} disabled={isReadOnly}>Mostra Corretta</Button>
+                    <Button variant="secondary" onClick={saveScoresForCurrentQuestion} disabled={isReadOnly || isSavingScores}>
+                      {isSavingScores ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                      Salva Punteggi
+                    </Button>
+                    <Button onClick={nextQuestion} className="flex-1 bg-accent text-accent-foreground" disabled={!hasScoresSavedForCurrentQ || isReadOnly}>
+                      {quiz.currentQuestionIndex < quiz.questions.length - 1 ? "Prossima Domanda" : "Termina Quiz"}
+                      <SkipForward className="ml-2 h-4 w-4" />
+                    </Button>
+                </div>
             </Card>
           </div>
         );
       case "results":
-        const finalParticipants = [...participants].sort((a,b) => b.score - a.score);
         return (
-          <Card className="text-center">
-            <CardHeader>
-              <CardTitle className="font-headline text-3xl">Quiz Terminato!</CardTitle>
-              <CardDescription>Ecco i punteggi finali per questo round.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {finalParticipants.map((p, i) => (
-                 <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-lg w-6">{i+1}</span>
-                      <div className="relative">
-                        <img src={p.avatar} alt={p.name} className="w-10 h-10 rounded-full" />
-                        {p.jollyActive && <Zap className="absolute -top-1 -right-1 h-4 w-4 text-yellow-500 fill-yellow-500" />}
+            <Card className="text-center p-6 space-y-6">
+                <CardTitle className="text-3xl font-headline">Classifica Finale 🏆</CardTitle>
+                <div className="space-y-3">
+                  {[...participants].sort((a,b) => b.score - a.score).map((p, i) => (
+                      <div key={p.id} className={cn("flex justify-between p-4 border rounded-lg", i === 0 ? "bg-yellow-50 border-yellow-200" : "bg-card")}>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-lg">{i + 1}.</span>
+                          <img src={p.avatar} className="w-10 h-10 rounded-full" alt={p.name} />
+                          <span className="font-bold">{p.name}</span>
+                        </div>
+                        <span className="font-mono font-bold text-xl">{p.score} pti</span>
                       </div>
-                      <span className="font-medium">{p.name}</span>
-                    </div>
-                    <div className="flex flex-col items-end">
-                        <span className="text-lg font-bold">{p.score} pti</span>
-                        {p.jollyActive && <span className="text-[10px] text-yellow-600 font-bold uppercase">Jolly Giocato!</span>}
-                    </div>
-                  </div>
-              ))}
-            </CardContent>
-            <CardFooter className="flex-col sm:flex-row gap-2">
-              <Button onClick={restartQuiz} variant="outline" className="w-full" disabled={isReadOnly}>Ricomincia il Quiz</Button>
-              <Button onClick={resetQuiz} className="w-full" disabled={isReadOnly}>Nuovo Quiz</Button>
-            </CardFooter>
-          </Card>
+                  ))}
+                </div>
+                <Button onClick={resetQuiz} className="w-full" size="lg" disabled={isReadOnly}>Nuovo Quiz</Button>
+            </Card>
         );
-      default:
-        return null;
+      default: return <div className="flex h-full items-center justify-center text-muted-foreground">Stato quiz sconosciuto.</div>;
     }
   };
 
-  const getQuizStateLabel = () => {
-    if (!quiz) return 'Caricamento...';
-    switch(quiz.state) {
-      case 'creating': return 'Creazione Quiz';
-      case 'lobby': return `Lobby: ${quiz.name}`;
-      case 'live': return `In Diretta: Domanda ${quiz.currentQuestionIndex + 1}`;
-      case 'question-results': return `Risultati: Domanda ${quiz.currentQuestionIndex + 1}`;
-      case 'results': return `Risultati: ${quiz.name}`;
-    }
-  }
-
   return (
     <SidebarProvider>
-      <div className="h-screen flex flex-col">
-        <header className="flex h-14 items-center gap-4 border-b bg-card px-4 lg:h-[60px] lg:px-6">
+      <div className="h-screen flex flex-col w-full bg-background">
+        <header className="flex h-14 items-center gap-4 border-b bg-card px-4 sticky top-0 z-50">
             <SidebarTrigger className="md:hidden"/>
-            <div className="flex items-center gap-2 font-semibold">
-                <LayoutGrid className="h-6 w-6 text-primary" />
-                <span className="font-headline text-xl">MaestroDiQuiz</span>
-            </div>
-            <div className="ml-auto flex items-center gap-2 sm:gap-4">
-                <h1 className="text-base sm:text-lg font-semibold md:text-2xl font-headline capitalize truncate hidden sm:block">{getQuizStateLabel()}</h1>
-                <div className="flex items-center gap-2 sm:gap-4 px-2 sm:px-4 border-r pr-2 sm:pr-6">
-                  <div className="flex items-center gap-1.5">
-                    <Zap className="h-4 w-4 text-yellow-500" />
-                    <Switch 
-                      id="jolly-toggle" 
-                      checked={settings?.jollyEnabled ?? false} 
-                      onCheckedChange={toggleJollyFunction}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Trophy className="h-4 w-4 text-primary" />
-                    <Switch 
-                      id="leaderboard-toggle" 
-                      checked={settings?.leaderboardEnabled ?? false} 
-                      onCheckedChange={toggleLeaderboardVisibility}
-                      disabled={isReadOnly}
-                    />
-                  </div>
+            <span className="font-headline text-xl text-primary font-bold">MaestroDiQuiz</span>
+            <div className="ml-auto flex items-center gap-4">
+                <div className="hidden sm:flex items-center gap-4 border-r pr-4">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-yellow-500" />
+                      <Label className="text-xs">Jolly</Label>
+                      <Switch checked={settings?.jollyEnabled} onCheckedChange={toggleJollyFunction} disabled={isReadOnly}/>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Trophy className="h-4 w-4 text-primary" />
+                      <Label className="text-xs">Classifica</Label>
+                      <Switch checked={settings?.leaderboardEnabled} onCheckedChange={toggleLeaderboardVisibility} disabled={isReadOnly}/>
+                    </div>
                 </div>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive" size="icon" title="Reset Sessione">
-                      <RefreshCw className="h-5 w-5" />
-                      <span className="sr-only">Reset Sessione</span>
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Sei sicuro di voler resettare la sessione?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Questa azione è utile se l'interfaccia sembra bloccata. Cancellerà la bozza o il quiz attivo dalla memoria locale, permettendoti di ricominciare. Non eliminerà i dati già salvati su Firestore.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Annulla</AlertDialogCancel>
-                      <AlertDialogAction onClick={resetQuiz}>Sì, resetta</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                <Button variant="ghost" size="icon" onClick={() => auth.signOut()}>
-                    <LogOut className="h-5 w-5" />
-                    <span className="sr-only">Esci</span>
-                </Button>
+                <Button variant="ghost" size="icon" onClick={() => auth.signOut()}><LogOut size={20} /></Button>
             </div>
         </header>
         <div className="flex flex-1 overflow-hidden">
           <Sidebar>
-            <SidebarHeader>
-              <h2 className="text-lg font-semibold font-headline">Sessione</h2>
-            </SidebarHeader>
             <SidebarContent>
-              <ParticipantsSidebar 
-                participants={participants} 
-                leaderboard={leaderboard || []}
-                onResetLeaderboard={resetLeaderboard}
-                isReadOnly={isReadOnly}
-                />
-               <MediaGallerySidebar mediaItems={mediaGallery} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
+              <ParticipantsSidebar participants={participants} leaderboard={leaderboard || []} onResetLeaderboard={() => {}} isReadOnly={isReadOnly} />
+              <MediaGallerySidebar mediaItems={mediaGallery || []} onDeleteMedia={deleteMedia} isReadOnly={isReadOnly} />
             </SidebarContent>
           </Sidebar>
-          <SidebarInset className="p-4 sm:p-6 overflow-auto">
-            {renderContent()}
-          </SidebarInset>
+          <SidebarInset className="p-6 overflow-auto bg-background/50">{renderContent()}</SidebarInset>
         </div>
       </div>
     </SidebarProvider>

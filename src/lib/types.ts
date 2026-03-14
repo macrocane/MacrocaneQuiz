@@ -1,4 +1,3 @@
-
 export type Host = {
   id: string;
   username: string;
@@ -57,9 +56,10 @@ export type Quiz = {
 export type StoredMedia = {
     id: string;
     name: string;
-    type: 'image' | 'video' | 'audio';
+    type: string;
     url: string;
     createdAt: string;
+    deleted?: boolean;
 }
 
 export type UserProfile = {
